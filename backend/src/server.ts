@@ -3,11 +3,9 @@ import cors from "cors";
 import helmet from "helmet";
 import morgan from "morgan";
 import dotenv from "dotenv";
-import bcrypt from "bcryptjs";
 import path from "path";
 
 import { connectDB } from "./config/db.js";
-import { UserModel } from "./models/User.js";
 
 import authRoutes from "./routes/authRoutes.js";
 import invoiceRoutes from "./routes/invoiceRoutes.js";
@@ -27,7 +25,7 @@ dotenv.config({ path: path.resolve(process.cwd(), '.env') });
 dotenv.config({ path: path.resolve(process.cwd(), 'backend/.env') });
 
 const app = express();
-const PORT = process.env.PORT || 5001;
+const PORT = Number(process.env.PORT) || 5001;
 
 // Middleware
 app.use(cors());
@@ -38,9 +36,12 @@ app.use(express.json());
 // Public Auth & Health Routes
 app.use("/api/auth", authRoutes);
 app.get("/api/health", (_req, res) => {
-  res.json({
+  res.status(200).json({
     success: true,
     message: "InvoiceFlow backend is running 🚀",
+    status: "healthy",
+    timestamp: new Date().toISOString(),
+    environment: process.env.NODE_ENV || "development",
   });
 });
 
@@ -55,34 +56,11 @@ app.use("/api/dashboard", requireAuth, dashboardRoutes);
 app.use("/api/ai", requireAuth, aiRoutes);
 app.use("/api/documents", documentRoutes);
 
-// const autoSeed = async () => {
-//   try {
-//     // Seed or verify Demo User Account for testing auth without dummy business data
-//     const demoUser = await UserModel.findOne({ email: 'demo@invoiceflow.ai' });
-//     if (!demoUser) {
-//       const passwordHash = await bcrypt.hash('password123', 10);
-//       await UserModel.create({
-//         id: 'usr-demo-01',
-//         name: 'Prakhar',
-//         email: 'demo@invoiceflow.ai',
-//         passwordHash,
-//         role: 'finance_admin',
-//         companyId: 'company-demo-01',
-//         companyName: 'Acme Enterprises',
-//         isActive: true,
-//       });
-//       console.log('✅ Demo user account ready: demo@invoiceflow.ai / password123');
-//     }
-//   } catch (err) {
-//     console.error('❌ Error during startup seed:', err);
-//   }
-// };
-
-// Start Server after DB Connection
+// Start Server binding explicitly to 0.0.0.0 for Render production deployment
 const startServer = async () => {
   await connectDB();
-  app.listen(PORT, () => {
-    console.log(`⚡ InvoiceFlow backend running on http://localhost:${PORT}`);
+  app.listen(PORT, '0.0.0.0', () => {
+    console.log(`⚡ InvoiceFlow backend running on port ${PORT} (0.0.0.0)`);
   });
 };
 

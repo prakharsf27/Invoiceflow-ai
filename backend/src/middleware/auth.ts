@@ -1,8 +1,18 @@
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
-import { UserModel, UserRole } from '../models/User.js';
+import { UserRole } from '../models/User.js';
 
-export const JWT_SECRET = process.env.JWT_SECRET || 'invoiceflow-enterprise-secret-key-2026';
+export const getJwtSecret = (): string => {
+    const secret = process.env.JWT_SECRET?.trim();
+
+    if (!secret) {
+        throw new Error('JWT_SECRET environment variable is not configured');
+    }
+
+    return secret;
+};
+
+export const JWT_SECRET = getJwtSecret();
 
 export interface AuthUserPayload {
   userId: string;
@@ -51,7 +61,7 @@ export const requireAuth = async (
 
     let decoded: any;
     try {
-      decoded = jwt.verify(token, JWT_SECRET);
+      decoded = jwt.verify(token, getJwtSecret());
     } catch (err: any) {
       res.status(401).json({
         success: false,
