@@ -7,15 +7,15 @@ export class GroqProvider implements AIProvider {
   private client: Groq | null = null;
   private currentKey: string | null = null;
 
+  // Currently active & supported Groq text/chat models
   private textModels = [
-    'llama-3.3-70b-versatile',
-    'llama-3.1-8b-instant',
-    'mixtral-8x7b-32768',
+    'openai/gpt-oss-120b',
+    'openai/gpt-oss-20b',
   ];
 
+  // Currently active & supported Groq document/OCR models
   private visionModels = [
-    'llama-3.2-11b-vision-instruct',
-    'llama-3.2-90b-vision-instruct',
+    'qwen/qwen3.6-27b',
   ];
 
   public isConfigured(): boolean {
@@ -35,6 +35,18 @@ export class GroqProvider implements AIProvider {
     }
 
     return this.client;
+  }
+
+  /**
+   * Helper to clean raw text and strip markdown code fences safely.
+   */
+  private cleanJsonResponse(rawText: string): string {
+    if (!rawText) return '';
+    return rawText
+      .replace(/^```json\s*/i, '')
+      .replace(/^```\s*/i, '')
+      .replace(/\s*```$/, '')
+      .trim();
   }
 
   public async generateText(
@@ -63,11 +75,13 @@ export class GroqProvider implements AIProvider {
           response_format: options?.jsonMode ? { type: 'json_object' } : undefined,
         });
 
-        const text = completion.choices[0]?.message?.content || '';
-        if (text && text.trim() !== '') {
+        const rawText = completion.choices[0]?.message?.content || '';
+        const cleaned = this.cleanJsonResponse(rawText);
+
+        if (cleaned && cleaned !== '') {
           const latencyMs = Date.now() - startTime;
           return {
-            response: text.trim(),
+            response: cleaned,
             model: modelName,
             provider: 'groq',
             latencyMs,
@@ -75,12 +89,12 @@ export class GroqProvider implements AIProvider {
         }
       } catch (err: any) {
         lastError = err;
-        console.warn(`[GroqProvider] Model ${modelName} failed (${err?.message || err}). Trying fallback model...`);
+        console.warn(`[GroqProvider] Text model ${modelName} failed (${err?.message || err}). Trying fallback...`);
         continue;
       }
     }
 
-    throw lastError || new Error('Groq failed to generate text across available models.');
+    throw lastError || new Error('Groq failed to generate text across active text models (openai/gpt-oss-120b, openai/gpt-oss-20b).');
   }
 
   /**
@@ -88,7 +102,6 @@ export class GroqProvider implements AIProvider {
    */
   private extractTextFromBuffer(fileBuffer: Buffer): string {
     const raw = fileBuffer.toString('utf-8');
-    // Extract printable strings of length >= 3
     const printable = raw.match(/[\x20-\x7E]{3,}/g) || [];
     const filtered = printable.filter(
       (str) =>
@@ -114,52 +127,57 @@ export class GroqProvider implements AIProvider {
     const isImage = mimeType.startsWith('image/');
     const base64Data = fileBuffer.toString('base64');
 
-    if (isImage) {
-      // Use Groq Vision Models for Image OCR Extraction
-      for (const visionModel of this.visionModels) {
-        try {
-          const completion = await client.chat.completions.create({
-            model: visionModel,
-            messages: [
-              { role: 'system', content: systemInst },
-              {
-                role: 'user',
-                content: [
-                  { type: 'text', text: userPromptText },
-                  {
-                    type: 'image_url',
-                    image_url: {
-                      url: `data:${mimeType};base64,${base64Data}`,
-                    },
-                  },
-                ],
-              },
-            ],
-            temperature: 0.1,
-            max_tokens: MAX_OUTPUT_TOKENS,
-            response_format: { type: 'json_object' },
+    // 1. Try Document / Vision model (qwen/qwen3.6-27b)
+    for (const visionModel of this.visionModels) {
+      try {
+        const userContent: any[] = [{ type: 'text', text: userPromptText }];
+        if (isImage) {
+          userContent.push({
+            type: 'image_url',
+            image_url: {
+              url: `data:${mimeType};base64,${base64Data}`,
+            },
           });
-
-          const text = completion.choices[0]?.message?.content || '';
-          if (text && text.trim() !== '') {
-            const latencyMs = Date.now() - startTime;
-            return {
-              response: text.trim(),
-              model: visionModel,
-              provider: 'groq',
-              latencyMs,
-            };
-          }
-        } catch (err: any) {
-          console.warn(`[GroqProvider] Vision model ${visionModel} failed (${err?.message}). Fallback to text model...`);
-          continue;
+        } else {
+          const extractedText = this.extractTextFromBuffer(fileBuffer);
+          userContent.push({
+            type: 'text',
+            text: `Document Content:\n${extractedText || 'Extract fields from document stream.'}`,
+          });
         }
+
+        const completion = await client.chat.completions.create({
+          model: visionModel,
+          messages: [
+            { role: 'system', content: systemInst },
+            { role: 'user', content: userContent },
+          ],
+          temperature: 0.1,
+          max_tokens: MAX_OUTPUT_TOKENS,
+          response_format: { type: 'json_object' },
+        });
+
+        const rawText = completion.choices[0]?.message?.content || '';
+        const cleaned = this.cleanJsonResponse(rawText);
+
+        if (cleaned && cleaned !== '') {
+          const latencyMs = Date.now() - startTime;
+          return {
+            response: cleaned,
+            model: visionModel,
+            provider: 'groq',
+            latencyMs,
+          };
+        }
+      } catch (err: any) {
+        console.warn(`[GroqProvider] Vision model ${visionModel} failed (${err?.message || err}). Trying fallback text models...`);
+        continue;
       }
     }
 
-    // PDF or fallback text processing using Groq text models
-    const extractedText = this.extractTextFromBuffer(fileBuffer);
-    const combinedPrompt = `${userPromptText}\n\nDocument Text Content Stream:\n${extractedText || 'No plain text extracted. Extract fields based on available document structure.'}`;
+    // 2. Fallback to active text models (openai/gpt-oss-120b, openai/gpt-oss-20b)
+    const textContent = this.extractTextFromBuffer(fileBuffer);
+    const textPrompt = `${userPromptText}\n\nDocument Stream Text:\n${textContent || 'Extract invoice JSON'}`;
 
     for (const textModel of this.textModels) {
       try {
@@ -167,30 +185,32 @@ export class GroqProvider implements AIProvider {
           model: textModel,
           messages: [
             { role: 'system', content: systemInst },
-            { role: 'user', content: combinedPrompt },
+            { role: 'user', content: textPrompt },
           ],
           temperature: 0.1,
           max_tokens: MAX_OUTPUT_TOKENS,
           response_format: { type: 'json_object' },
         });
 
-        const text = completion.choices[0]?.message?.content || '';
-        if (text && text.trim() !== '') {
+        const rawText = completion.choices[0]?.message?.content || '';
+        const cleaned = this.cleanJsonResponse(rawText);
+
+        if (cleaned && cleaned !== '') {
           const latencyMs = Date.now() - startTime;
           return {
-            response: text.trim(),
+            response: cleaned,
             model: textModel,
             provider: 'groq',
             latencyMs,
           };
         }
       } catch (err: any) {
-        console.warn(`[GroqProvider] Text model ${textModel} failed (${err?.message}). Trying fallback...`);
+        console.warn(`[GroqProvider] Text model ${textModel} failed (${err?.message || err}). Trying next...`);
         continue;
       }
     }
 
-    throw new Error('Groq failed to extract document content.');
+    throw new Error('Groq failed to extract document content across supported models (qwen/qwen3.6-27b, openai/gpt-oss-120b).');
   }
 }
 
