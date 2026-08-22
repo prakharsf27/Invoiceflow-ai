@@ -69,7 +69,7 @@ class DocumentProcessingService {
               extractedAt: duplicateDoc.extractedAt || new Date().toISOString(),
             },
           },
-          { new: true }
+          { returnDocument: 'after' }
         );
         return updated || doc;
       }
@@ -141,7 +141,7 @@ class DocumentProcessingService {
               })),
             },
           },
-          { upsert: true, new: true }
+          { upsert: true, returnDocument: 'after' }
         );
 
         linkedRecordId = createdPO.id || createdPO._id?.toString();
@@ -226,7 +226,7 @@ class DocumentProcessingService {
                 : 'Inspect validation checks and PO variances prior to disbursement.',
             },
           },
-          { upsert: true, new: true }
+          { upsert: true, returnDocument: 'after' }
         );
 
         linkedRecordId = createdInvoice.id || createdInvoice._id?.toString();
@@ -247,7 +247,7 @@ class DocumentProcessingService {
             extractedAt: new Date().toISOString(),
           },
         },
-        { new: true }
+        { returnDocument: 'after' }
       );
 
       return finalDoc || doc;
@@ -262,7 +262,7 @@ class DocumentProcessingService {
             extractionError: err?.message || 'AI document processing failed.',
           },
         },
-        { new: true }
+        { returnDocument: 'after' }
       );
       throw err;
     }
