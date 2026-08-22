@@ -373,6 +373,7 @@ class CentralizedAIService {
    */
   public async generateText(
     prompt: string,
+    systemInstruction?: string,
     context?: { companyId?: string; userId?: string }
   ): Promise<{ response: string; model: string; latencyMs: number }> {
     if (!this.isConfigured()) {
@@ -401,6 +402,7 @@ class CentralizedAIService {
                 config: {
                   temperature: 0.7,
                   maxOutputTokens: MAX_OUTPUT_TOKENS,
+                  systemInstruction: systemInstruction ? { parts: [{ text: systemInstruction }] } : undefined,
                 },
               })
               .then((res) => res.text || '')

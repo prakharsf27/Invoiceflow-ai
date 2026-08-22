@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useEffect, useMemo, useCall
 import type { Invoice, Supplier, PurchaseOrder, PaymentRecord, InvoiceStatus } from '../types';
 import { invoiceService } from '../services/invoiceService';
 import { supplierService, poService, paymentService, exceptionService } from '../services/dataServices';
+import { copilotService } from '../services/copilotService';
 
 export interface AppNotification {
   id: string;
@@ -49,11 +50,12 @@ interface AppContextType {
   showToast: (title: string, type?: 'success' | 'info' | 'warning' | 'error') => void;
   
   // Copilot helper
-  askCopilot: (query: string) => {
+  askCopilot: (query: string) => Promise<{
     reply: string;
     suggestedActions?: { label: string; action: () => void }[];
     relatedInvoices?: Invoice[];
-  };
+    structuredData?: any;
+  }>;
 }
 
 const NOTIF_STORAGE_KEY = 'invoiceflow_app_notifications_v1';
@@ -350,76 +352,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     showToast('Data refreshed from live backend API', 'info');
   };
 
-  // AI Copilot Query Engine (Dynamic without mock hardcoding)
-  const askCopilot = (query: string) => {
-    const q = query.toLowerCase();
-
-    if (q.includes('attention') || q.includes('need') || q.includes('review')) {
-      const attentionInvoices = invoices.filter(
-        (i) => i.status === 'review' || i.status === 'critical' || i.status === 'hold' || i.status === 'on_hold'
-      );
-      if (attentionInvoices.length === 0) {
-        return {
-          reply: `There are currently 0 invoices requiring attention. All processed invoices are clear.`,
-          relatedInvoices: [],
-        };
-      }
-      const top = attentionInvoices[0];
+  // AI Copilot Query Engine (Calls authenticated backend API)
+  const askCopilot = async (query: string) => {
+    try {
+      const res = await copilotService.askCopilot(query);
       return {
-        reply: `${attentionInvoices.length} invoice(s) require attention today. Priority item: ${top.supplierName || 'Invoice'} (${top.invoiceNumber}) for ₹${top.amount.toLocaleString('en-IN')}.`,
-        relatedInvoices: attentionInvoices,
+        reply: res.content,
+        relatedInvoices: [],
+        structuredData: res.structuredData,
       };
-    }
-
-    if (q.includes('overdue')) {
-      const overdueInvoices = invoices.filter((i) => i.status === 'overdue' || i.paymentStatus === 'overdue');
-      const totalOverdue = overdueInvoices.reduce((sum, i) => sum + i.amount, 0);
-      if (overdueInvoices.length === 0) {
-        return {
-          reply: `No invoices are currently overdue for your organization.`,
-          relatedInvoices: [],
-        };
-      }
+    } catch (err: any) {
       return {
-        reply: `${overdueInvoices.length} invoice(s) currently overdue totaling ₹${totalOverdue.toLocaleString('en-IN')}.`,
-        relatedInvoices: overdueInvoices,
-      };
-    }
-
-    if (q.includes('bank') || q.includes('changed')) {
-      const bankChanged = invoices.filter((i) => i.bankDetails?.isChangedFromPrevious);
-      if (bankChanged.length === 0) {
-        return {
-          reply: `No unverified bank account changes detected in your company invoices.`,
-          relatedInvoices: [],
-        };
-      }
-      const first = bankChanged[0];
-      return {
-        reply: `${first.supplierName} (${first.invoiceNumber}) submitted a bank account flagged as changed from previous records.`,
-        relatedInvoices: bankChanged,
-      };
-    }
-
-    if (q.includes('total payables') || q.includes('payables')) {
-      return {
-        reply: `Total pending payables across all open invoices is ₹${totalPayables.toLocaleString('en-IN')} (${invoices.length} total invoices).`,
-      };
-    }
-
-    if (invoices.length === 0) {
-      return {
-        reply: `InvoiceFlow AI is tracking 0 invoices for your organization. Upload an invoice to get started.`,
+        reply: err?.message || 'Failed to communicate with Copilot API.',
         relatedInvoices: [],
       };
     }
-
-    const cleared = invoices.filter((i) => i.status === 'ready' || i.status === 'paid').length;
-    const pct = ((cleared / invoices.length) * 100).toFixed(1);
-    return {
-      reply: `InvoiceFlow AI is tracking ${invoices.length} invoice(s) totaling ₹${totalPayables.toLocaleString('en-IN')}. ${cleared} (${pct}%) auto-cleared.`,
-      relatedInvoices: invoices.filter((i) => i.status === 'critical' || i.status === 'review'),
-    };
   };
 
   return (

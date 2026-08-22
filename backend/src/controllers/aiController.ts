@@ -31,7 +31,7 @@ export const testGemini = async (req: Request, res: Response): Promise<void> => 
       return;
     }
 
-    const { response, model, latencyMs } = await aiService.generateText(prompt.trim(), {
+    const { response, model, latencyMs } = await aiService.generateText(prompt.trim(), undefined, {
       companyId,
       userId,
     });

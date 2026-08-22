@@ -1,94 +1,96 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Sparkles, Send, Bot, ArrowRight } from 'lucide-react';
+import { Sparkles, Send, Bot, ArrowRight, AlertTriangle } from 'lucide-react';
 import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { Badge } from '../components/ui/Badge';
 import { useApp } from '../context/AppContext';
 import { useAuth } from '../context/AuthContext';
-import { formatFullINR } from '../lib/utils';
+import { copilotService } from '../services/copilotService';
 import type { CopilotMessage } from '../types';
 
 export const CopilotPage: React.FC = () => {
   const navigate = useNavigate();
-  const { askCopilot, invoices, suppliers } = useApp();
+  const { invoices, suppliers, showToast } = useApp();
   const { user } = useAuth();
 
   const [messages, setMessages] = useState<CopilotMessage[]>([
     {
       id: 'init-1',
       role: 'assistant',
-      content: `Hello ${user?.name || 'there'}! I am your AI Finance Copilot. I analyze your company's live invoices, PO matches, bank detail changes, and upcoming payables. What would you like to investigate today?`,
-      timestamp: '10:00 AM'
-    }
+      content: `Hello ${user?.name || 'there'}! I am your AI Finance Copilot. I analyze ${user?.companyName || 'your company'}'s live invoices, PO matches, bank detail changes, and upcoming payables. What would you like to investigate today?`,
+      timestamp: '10:00 AM',
+    },
   ]);
   const [input, setInput] = useState('');
   const [isTyping, setIsTyping] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   const suggestedQuestions = [
     'What needs my attention today?',
     'Which invoices are overdue?',
     'Show priority attention invoices',
     'Which suppliers changed their bank details?',
-    'Show total payables',
-    'Which invoices are duplicates?',
+    'Show total payables summary',
+    'Which invoices are PO matched vs mismatched?',
     'How many invoices were auto-cleared?',
-    'How much time was saved?',
+    'Are there any high risk vendors?',
   ];
 
-  const handleSend = (queryText?: string) => {
+  const handleSend = async (queryText?: string) => {
     const textToSend = queryText || input;
-    if (!textToSend.trim()) return;
+    if (!textToSend.trim() || isTyping) return;
 
+    setErrorMsg(null);
     const userMsg: CopilotMessage = {
       id: `user-${Date.now()}`,
       role: 'user',
       content: textToSend,
-      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
     };
 
     setMessages((prev) => [...prev, userMsg]);
     setInput('');
     setIsTyping(true);
 
-    setTimeout(() => {
-      const response = askCopilot(textToSend);
-      
+    try {
+      const response = await copilotService.askCopilot(textToSend);
+
       const assistantMsg: CopilotMessage = {
-        id: `assistant-${Date.now()}`,
+        id: response.id || `assistant-${Date.now()}`,
         role: 'assistant',
-        content: response.reply,
-        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        content: response.content,
+        timestamp: response.timestamp || new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        structuredData: response.structuredData as any,
       };
 
-      if (response.relatedInvoices && response.relatedInvoices.length > 0) {
-        const first = response.relatedInvoices[0];
-        assistantMsg.structuredData = {
-          type: 'recommendation',
-          title: 'Related Financial Record:',
-          highlightItem: {
-            title: `${first.supplierName} (${first.invoiceNumber})`,
-            amount: formatFullINR(first.amount),
-            reasons: [first.aiStatus, first.aiRecommendation],
-            actionLabel: 'Inspect Invoice Details',
-            actionUrl: `/app/invoices/${first.id}`,
-          }
-        };
-      }
-
       setMessages((prev) => [...prev, assistantMsg]);
+    } catch (err: any) {
+      console.error('Copilot query error:', err);
+      const msg = err?.message || 'Failed to query Copilot. Please try again.';
+      setErrorMsg(msg);
+      showToast(msg, 'error');
+
+      const fallbackMsg: CopilotMessage = {
+        id: `err-${Date.now()}`,
+        role: 'assistant',
+        content: `Sorry, I encountered an error analyzing your company records: ${msg}`,
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      };
+      setMessages((prev) => [...prev, fallbackMsg]);
+    } finally {
       setIsTyping(false);
-    }, 400);
+    }
   };
 
   return (
     <div className="h-[calc(100vh-8.5rem)] flex flex-col md:flex-row gap-6">
       {/* Left Chat Window */}
-      <div className="flex-1 flex flex-col bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+      <div className="flex-1 flex flex-col bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden">
         {/* Chat Header */}
         <div className="p-4 border-b border-slate-100 flex items-center justify-between bg-gradient-to-r from-purple-50/50 to-white">
           <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-lg bg-brand-600 text-white flex items-center justify-center shadow-sm">
+            <div className="w-8 h-8 rounded-lg bg-brand-600 text-white flex items-center justify-center shadow-xs">
               <Sparkles className="w-4 h-4 animate-pulse" />
             </div>
             <div>
@@ -96,11 +98,11 @@ export const CopilotPage: React.FC = () => {
                 ✦ Finance Copilot
               </h2>
               <p className="text-[11px] text-slate-500">
-                Connected to live company dataset ({invoices.length} invoices indexed).
+                Connected to live MongoDB company dataset ({invoices.length} invoices, {suppliers.length} vendors indexed).
               </p>
             </div>
           </div>
-          <Badge variant="purple" size="sm">AI Engine Live</Badge>
+          <Badge variant="purple" size="sm">Gemini 2.5 Flash Live</Badge>
         </div>
 
         {/* Message Stream */}
@@ -125,25 +127,34 @@ export const CopilotPage: React.FC = () => {
                     : 'bg-slate-50 border border-slate-200/80 text-slate-800'
                 }`}
               >
-                <p>{msg.content}</p>
+                <p className="whitespace-pre-wrap">{msg.content}</p>
 
                 {/* Structured Action Cards */}
                 {msg.structuredData && (
                   <div className="p-3 bg-white border border-slate-200 rounded-lg text-slate-900 space-y-2 mt-2 shadow-xs">
                     {msg.structuredData.title && (
-                      <div className="font-bold text-xs text-brand-800">
-                        {msg.structuredData.title}
+                      <div className="font-bold text-xs text-brand-800 flex items-center gap-1">
+                        <Sparkles className="w-3.5 h-3.5 text-brand-600" />
+                        <span>{msg.structuredData.title}</span>
                       </div>
                     )}
 
                     {msg.structuredData.highlightItem && (
                       <div className="space-y-1 text-xs">
-                        <div className="flex justify-between font-semibold">
+                        <div className="flex items-center justify-between font-semibold">
                           <span>{msg.structuredData.highlightItem.title}</span>
-                          <span className="font-bold text-rose-600">
-                            {msg.structuredData.highlightItem.amount}
-                          </span>
+                          {msg.structuredData.highlightItem.amount && (
+                            <span className="font-bold text-rose-600">
+                              {msg.structuredData.highlightItem.amount}
+                            </span>
+                          )}
                         </div>
+
+                        {msg.structuredData.highlightItem.risk && (
+                          <div className="text-[10px] font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded w-max">
+                            {msg.structuredData.highlightItem.risk}
+                          </div>
+                        )}
 
                         {msg.structuredData.highlightItem.reasons && (
                           <ul className="list-disc pl-4 text-slate-500 text-[11px] space-y-0.5">
@@ -154,15 +165,15 @@ export const CopilotPage: React.FC = () => {
                         )}
 
                         {msg.structuredData.highlightItem.actionUrl && (
-                          <div className="pt-1">
+                          <div className="pt-1.5">
                             <Button
                               onClick={() => navigate(msg.structuredData!.highlightItem!.actionUrl!)}
                               variant="brand"
                               size="sm"
-                              className="w-full text-xs cursor-pointer"
+                              className="w-full text-xs cursor-pointer gap-1"
                             >
                               <span>{msg.structuredData.highlightItem.actionLabel || 'View Record'}</span>
-                              <ArrowRight className="w-3.5 h-3.5 ml-1" />
+                              <ArrowRight className="w-3.5 h-3.5" />
                             </Button>
                           </div>
                         )}
@@ -187,13 +198,20 @@ export const CopilotPage: React.FC = () => {
           {isTyping && (
             <div className="flex items-center gap-2 text-xs text-brand-600 pl-10">
               <Sparkles className="w-3.5 h-3.5 animate-spin" />
-              <span>Analyzing live company records...</span>
+              <span>Gemini 2.5 Flash analyzing company MongoDB records...</span>
             </div>
           )}
         </div>
 
         {/* Input Bar */}
-        <div className="p-3 border-t border-slate-100 bg-white">
+        <div className="p-3 border-t border-slate-100 bg-white space-y-2">
+          {errorMsg && (
+            <div className="text-[11px] text-rose-700 bg-rose-50 px-3 py-1.5 rounded-lg flex items-center gap-1.5">
+              <AlertTriangle className="w-3.5 h-3.5 text-rose-600 shrink-0" />
+              <span>{errorMsg}</span>
+            </div>
+          )}
+
           <form
             onSubmit={(e) => {
               e.preventDefault();
@@ -206,9 +224,16 @@ export const CopilotPage: React.FC = () => {
               placeholder="Ask anything about invoices, POs, vendors, or overdue bills..."
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              className="flex-1 px-3.5 py-2 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-brand-500 focus:bg-white"
+              disabled={isTyping}
+              className="flex-1 px-3.5 py-2 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-brand-500 focus:bg-white disabled:opacity-50"
             />
-            <Button type="submit" variant="brand" size="sm" disabled={!input.trim()} className="cursor-pointer">
+            <Button
+              type="submit"
+              variant="brand"
+              size="sm"
+              disabled={!input.trim() || isTyping}
+              className="cursor-pointer"
+            >
               <Send className="w-3.5 h-3.5" />
             </Button>
           </form>
@@ -226,7 +251,8 @@ export const CopilotPage: React.FC = () => {
               <button
                 key={idx}
                 onClick={() => handleSend(q)}
-                className="w-full text-left p-2 rounded-lg text-xs bg-slate-50 hover:bg-brand-50 hover:text-brand-700 text-slate-700 border border-slate-100 transition-colors cursor-pointer"
+                disabled={isTyping}
+                className="w-full text-left p-2 rounded-lg text-xs bg-slate-50 hover:bg-brand-50 hover:text-brand-700 text-slate-700 border border-slate-100 transition-colors cursor-pointer disabled:opacity-50"
               >
                 {q}
               </button>
@@ -239,7 +265,7 @@ export const CopilotPage: React.FC = () => {
             ✦ AI Operations Context
           </h4>
           <p className="text-slate-300 text-[11px] leading-relaxed">
-            InvoiceFlow Copilot has indexed {invoices.length} vendor invoices and {suppliers.length} registered suppliers for {user?.companyName || 'your organization'}.
+            InvoiceFlow Copilot queries live MongoDB records for {user?.companyName || 'your organization'}. All queries are rate limited and company isolated.
           </p>
         </Card>
       </div>
