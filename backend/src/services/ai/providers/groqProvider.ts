@@ -146,10 +146,12 @@ export class GroqProvider implements AIProvider {
           });
         }
 
+        const effectiveSystemPrompt = `${systemInst}\nYou must output a valid JSON object matching the requested schema. Do not output conversational text outside JSON.`;
+
         const completion = await client.chat.completions.create({
           model: visionModel,
           messages: [
-            { role: 'system', content: systemInst },
+            { role: 'system', content: effectiveSystemPrompt },
             { role: 'user', content: userContent },
           ],
           temperature: 0.1,
