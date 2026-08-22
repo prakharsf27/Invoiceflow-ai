@@ -1,13 +1,16 @@
-import { GoogleGenAI } from '@google/genai';
 import dotenv from 'dotenv';
 import path from 'path';
 
-import { PROMPTS, DEFAULT_GEMINI_MODEL, MAX_OUTPUT_TOKENS } from './prompts.js';
+import { PROMPTS, DEFAULT_GEMINI_MODEL } from './prompts.js';
 import { aiRateLimiter } from './aiRateLimiter.js';
 import { aiQueue } from './aiQueue.js';
 import { withAIRetry } from './aiRetry.js';
-import { aiCacheService, StoredAIAnalysis } from './aiCacheService.js';
+import { aiCacheService } from './aiCacheService.js';
 import { aiLogger } from './aiLogger.js';
+
+import { geminiProvider } from './providers/geminiProvider.js';
+import { groqProvider } from './providers/groqProvider.js';
+import { isRetryableAIError, AIProviderResult } from './types.js';
 
 // Load .env configuration
 dotenv.config();
@@ -26,47 +29,32 @@ export interface InvoiceRiskAnalysisResult {
 export interface AnalysisResponse {
   analysis: InvoiceRiskAnalysisResult;
   model: string;
+  provider?: 'gemini' | 'groq';
   analyzedAt: string;
   analysisKey: string;
   cached: boolean;
 }
 
 class CentralizedAIService {
-  private client: GoogleGenAI | null = null;
-  private currentKey: string | null = null;
-  private modelFallbackQueue = [
-    process.env.GEMINI_MODEL || DEFAULT_GEMINI_MODEL,
-    'gemini-3.6-flash',
-    'gemini-2.5-flash',
-    'gemini-flash-latest',
-    'gemini-flash-lite-latest',
-  ];
-
+  /**
+   * Check whether at least one AI provider is configured in environment.
+   */
   public isConfigured(): boolean {
-    const apiKey = process.env.GEMINI_API_KEY;
-    return Boolean(apiKey && apiKey.trim() !== '');
+    return geminiProvider.isConfigured() || groqProvider.isConfigured();
   }
 
   public getModel(): string {
-    return process.env.GEMINI_MODEL || DEFAULT_GEMINI_MODEL;
-  }
-
-  private getClient(): GoogleGenAI {
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey || apiKey.trim() === '') {
-      throw new Error('Gemini API key is not configured. Please set GEMINI_API_KEY in backend/.env');
+    if (geminiProvider.isConfigured()) {
+      return process.env.GEMINI_MODEL || DEFAULT_GEMINI_MODEL;
     }
-
-    if (!this.client || this.currentKey !== apiKey.trim()) {
-      this.client = new GoogleGenAI({ apiKey: apiKey.trim() });
-      this.currentKey = apiKey.trim();
+    if (groqProvider.isConfigured()) {
+      return 'llama-3.3-70b-versatile';
     }
-
-    return this.client;
+    return DEFAULT_GEMINI_MODEL;
   }
 
   /**
-   * Check rate limits before executing an AI call.
+   * Check sliding-window rate limit for given company/user.
    */
   private checkRateLimit(companyId?: string, userId?: string): void {
     const limitKey = userId || companyId || 'global';
@@ -81,90 +69,95 @@ class CentralizedAIService {
   }
 
   /**
-   * Helper to execute Gemini requests across model fallback queue if model 404s.
+   * Primary-to-Fallback AI Provider Orchestration Execution Engine.
+   * Attempts Gemini first. If Gemini fails with a retryable availability/rate-limit error,
+   * automatically attempts Groq fallback.
    */
-  private async executeGenerate(
-    runner: (client: GoogleGenAI, modelName: string) => Promise<string>
-  ): Promise<{ text: string; effectiveModel: string }> {
-    const client = this.getClient();
-    const primary = this.getModel();
-    const uniqueModels = Array.from(new Set([primary, ...this.modelFallbackQueue]));
+  private async executeWithFallback<T>(
+    operationName: string,
+    geminiOp: () => Promise<AIProviderResult<T>>,
+    groqOp: () => Promise<AIProviderResult<T>>,
+    companyId: string,
+    userId?: string
+  ): Promise<AIProviderResult<T>> {
+    const limitKey = userId || companyId;
 
-    let lastError: any = null;
-
-    for (const modelName of uniqueModels) {
+    // 1. Attempt Primary Provider: Gemini
+    if (geminiProvider.isConfigured()) {
+      console.log(`[AI] Trying Gemini (${operationName})...`);
       try {
-        const text = await runner(client, modelName);
-        if (text && text.trim() !== '') {
-          return { text: text.trim(), effectiveModel: modelName };
+        const result = await aiQueue.enqueue(() =>
+          withAIRetry(async () => {
+            this.checkRateLimit(companyId, userId);
+            aiRateLimiter.consume(limitKey);
+            return await geminiOp();
+          })
+        );
+        console.log(`[AI] Gemini succeeded (${result.model})`);
+        return result;
+      } catch (geminiErr: any) {
+        const errMsg = geminiErr?.message || String(geminiErr);
+        console.warn(`[AI] Gemini failed for ${operationName}: ${errMsg}`);
+
+        // Only fallback to Groq if the error is a provider availability / rate-limit / 429 error
+        if (!isRetryableAIError(geminiErr)) {
+          console.error(`[AI] Non-retryable application/validation error in Gemini. Skipping fallback.`);
+          throw geminiErr;
         }
-      } catch (err: any) {
-        lastError = err;
-        const msg = err?.message || String(err);
-        if (msg.includes('NOT_FOUND') || msg.includes('404') || msg.includes('is not found')) {
-          console.warn(`[CentralizedAIService] Model ${modelName} 404/not available. Trying fallback...`);
-          continue;
-        }
-        throw err;
+
+        console.warn(`[AI] Gemini unavailable/rate limited. Preparing fallback to Groq...`);
+      }
+    } else {
+      console.warn(`[AI] Gemini is not configured. Falling back directly to Groq...`);
+    }
+
+    // 2. Attempt Fallback Provider: Groq
+    if (groqProvider.isConfigured()) {
+      console.log(`[AI] Falling back to Groq (${operationName})...`);
+      try {
+        const result = await aiQueue.enqueue(() =>
+          withAIRetry(async () => {
+            this.checkRateLimit(companyId, userId);
+            aiRateLimiter.consume(limitKey);
+            return await groqOp();
+          })
+        );
+        console.log(`[AI] Groq succeeded (${result.model})`);
+        return result;
+      } catch (groqErr: any) {
+        const groqMsg = groqErr?.message || String(groqErr);
+        console.error(`[AI] Groq fallback failed for ${operationName}: ${groqMsg}`);
+        console.error(`[AI] All AI providers unavailable.`);
+        throw new Error(`AI processing unavailable across all providers (Gemini & Groq). Please try again shortly.`);
       }
     }
 
-    throw lastError || new Error('Failed to generate content across available models.');
+    throw new Error('No AI provider configured. Please set GEMINI_API_KEY or GROQ_API_KEY in environment.');
   }
 
   /**
-   * Extract document data (PDF, PNG, JPG) using Gemini multimodal capabilities.
+   * Extract document data (PDF, PNG, JPG) using AI OCR capabilities with Groq fallback.
    */
   public async extractDocumentMedia(
     fileBuffer: Buffer,
     mimeType: string,
     context?: { companyId?: string; userId?: string }
-  ): Promise<{ jsonText: string; model: string; latencyMs: number }> {
+  ): Promise<{ jsonText: string; model: string; provider: 'gemini' | 'groq'; latencyMs: number }> {
     if (!this.isConfigured()) {
-      throw new Error('Gemini API key is not configured. Please set GEMINI_API_KEY in backend/.env');
+      throw new Error('No AI provider configured. Please set GEMINI_API_KEY or GROQ_API_KEY in environment.');
     }
 
     const companyId = context?.companyId || 'company-demo-01';
     const userId = context?.userId;
-    const limitKey = userId || companyId;
-
-    this.checkRateLimit(companyId, userId);
-
-    const base64Data = fileBuffer.toString('base64');
     const startTime = Date.now();
-    let effectiveModelUsed = this.getModel();
 
     try {
-      const jsonText = await aiQueue.enqueue(() =>
-        withAIRetry(async () => {
-          aiRateLimiter.consume(limitKey);
-
-          const { text, effectiveModel } = await this.executeGenerate((client, modelName) =>
-            client.models
-              .generateContent({
-                model: modelName,
-                contents: [
-                  {
-                    inlineData: {
-                      mimeType,
-                      data: base64Data,
-                    },
-                  },
-                  PROMPTS.OCR_USER_PROMPT,
-                ],
-                config: {
-                  systemInstruction: PROMPTS.OCR_SYSTEM_INSTRUCTION,
-                  temperature: 0.1,
-                  maxOutputTokens: MAX_OUTPUT_TOKENS,
-                  responseMimeType: 'application/json',
-                },
-              })
-              .then((res) => res.text || '')
-          );
-
-          effectiveModelUsed = effectiveModel;
-          return text;
-        })
+      const result = await this.executeWithFallback<string>(
+        'ocr_extraction',
+        () => geminiProvider.extractDocumentMedia(fileBuffer, mimeType),
+        () => groqProvider.extractDocumentMedia(fileBuffer, mimeType),
+        companyId,
+        userId
       );
 
       const latencyMs = Date.now() - startTime;
@@ -176,11 +169,16 @@ class CentralizedAIService {
         timestamp: new Date().toISOString(),
         success: true,
         cached: false,
-        model: effectiveModelUsed,
+        model: `${result.provider}:${result.model}`,
         latencyMs,
       });
 
-      return { jsonText, model: effectiveModelUsed, latencyMs };
+      return {
+        jsonText: result.response,
+        model: result.model,
+        provider: result.provider,
+        latencyMs,
+      };
     } catch (err: any) {
       const latencyMs = Date.now() - startTime;
       aiLogger.log({
@@ -190,7 +188,7 @@ class CentralizedAIService {
         timestamp: new Date().toISOString(),
         success: false,
         cached: false,
-        model: effectiveModelUsed,
+        model: 'all_providers_failed',
         latencyMs,
         error: err?.message,
       });
@@ -199,7 +197,7 @@ class CentralizedAIService {
   }
 
   /**
-   * Analyze invoice AP risk with caching, deterministic hash keys, and minimal context payload.
+   * Analyze invoice AP risk with caching, deterministic hash keys, and AI provider fallback.
    */
   public async analyzeInvoiceRisk(
     invoice: any,
@@ -212,10 +210,9 @@ class CentralizedAIService {
     const userId = context?.userId;
     const forceReanalyze = Boolean(context?.forceReanalyze);
 
-    // 1. Generate deterministic analysis key from invoice data
+    // 1. Deterministic analysis key check in cache
     const analysisKey = aiCacheService.generateInvoiceAnalysisKey(invoice);
 
-    // 2. Check cache in MongoDB unless explicit re-analysis requested
     if (!forceReanalyze) {
       const cached = await aiCacheService.getCachedInvoiceAnalysis(invoice.id || invoice._id, companyId, analysisKey);
       if (cached && cached.result) {
@@ -241,15 +238,12 @@ class CentralizedAIService {
     }
 
     if (!this.isConfigured()) {
-      throw new Error('Gemini API key is not configured. Please set GEMINI_API_KEY in backend/.env');
+      throw new Error('No AI provider configured. Please set GEMINI_API_KEY or GROQ_API_KEY in environment.');
     }
 
-    this.checkRateLimit(companyId, userId);
-    const limitKey = userId || companyId;
     const startTime = Date.now();
-    let effectiveModelUsed = this.getModel();
 
-    // 3. Construct minimal, bounded context payload
+    // 2. Construct minimal context payload
     const minimalContext = {
       invoice: {
         number: invoice.invoiceNumber,
@@ -282,32 +276,16 @@ class CentralizedAIService {
     const prompt = `Analyze AP risk for this invoice summary:\n${JSON.stringify(minimalContext, null, 2)}`;
 
     try {
-      const rawText = await aiQueue.enqueue(() =>
-        withAIRetry(async () => {
-          aiRateLimiter.consume(limitKey);
-
-          const { text, effectiveModel } = await this.executeGenerate((client, modelName) =>
-            client.models
-              .generateContent({
-                model: modelName,
-                contents: prompt,
-                config: {
-                  systemInstruction: PROMPTS.RISK_ANALYSIS_SYSTEM_INSTRUCTION,
-                  temperature: 0.2,
-                  maxOutputTokens: MAX_OUTPUT_TOKENS,
-                  responseMimeType: 'application/json',
-                },
-              })
-              .then((res) => res.text || '')
-          );
-
-          effectiveModelUsed = effectiveModel;
-          return text;
-        })
+      const result = await this.executeWithFallback<string>(
+        'risk_analysis',
+        () => geminiProvider.generateText(prompt, PROMPTS.RISK_ANALYSIS_SYSTEM_INSTRUCTION, { temperature: 0.2, jsonMode: true }),
+        () => groqProvider.generateText(prompt, PROMPTS.RISK_ANALYSIS_SYSTEM_INSTRUCTION, { temperature: 0.2, jsonMode: true }),
+        companyId,
+        userId
       );
 
       const latencyMs = Date.now() - startTime;
-      const cleaned = rawText
+      const cleaned = result.response
         .replace(/^```json\s*/i, '')
         .replace(/^```\s*/i, '')
         .replace(/\s*```$/, '')
@@ -324,12 +302,12 @@ class CentralizedAIService {
         recommendation: parsed.recommendation || 'Proceed with standard approval workflow.',
       };
 
-      // 4. Save to MongoDB document cache
+      // Save to MongoDB cache
       const stored = await aiCacheService.saveInvoiceAnalysis(
         invoice.id || invoice._id,
         companyId,
         validatedResult,
-        effectiveModelUsed,
+        `${result.provider}:${result.model}`,
         analysisKey
       );
 
@@ -340,13 +318,14 @@ class CentralizedAIService {
         timestamp: new Date().toISOString(),
         success: true,
         cached: false,
-        model: effectiveModelUsed,
+        model: `${result.provider}:${result.model}`,
         latencyMs,
       });
 
       return {
         analysis: validatedResult,
-        model: effectiveModelUsed,
+        model: result.model,
+        provider: result.provider,
         analyzedAt: stored.analyzedAt,
         analysisKey,
         cached: false,
@@ -360,7 +339,7 @@ class CentralizedAIService {
         timestamp: new Date().toISOString(),
         success: false,
         cached: false,
-        model: effectiveModelUsed,
+        model: 'all_providers_failed',
         latencyMs,
         error: err?.message,
       });
@@ -369,48 +348,28 @@ class CentralizedAIService {
   }
 
   /**
-   * General text generation endpoint (e.g. for testing connection).
+   * General text generation endpoint with Gemini -> Groq fallback.
    */
   public async generateText(
     prompt: string,
     systemInstruction?: string,
     context?: { companyId?: string; userId?: string }
-  ): Promise<{ response: string; model: string; latencyMs: number }> {
+  ): Promise<{ response: string; model: string; provider: 'gemini' | 'groq'; latencyMs: number }> {
     if (!this.isConfigured()) {
-      throw new Error('Gemini API key is not configured. Please set GEMINI_API_KEY in backend/.env');
+      throw new Error('No AI provider configured. Please set GEMINI_API_KEY or GROQ_API_KEY in environment.');
     }
 
     const companyId = context?.companyId || 'company-demo-01';
     const userId = context?.userId;
-    const limitKey = userId || companyId;
-
-    this.checkRateLimit(companyId, userId);
-
     const startTime = Date.now();
-    let effectiveModelUsed = this.getModel();
 
     try {
-      const responseText = await aiQueue.enqueue(() =>
-        withAIRetry(async () => {
-          aiRateLimiter.consume(limitKey);
-
-          const { text, effectiveModel } = await this.executeGenerate((client, modelName) =>
-            client.models
-              .generateContent({
-                model: modelName,
-                contents: prompt.trim(),
-                config: {
-                  temperature: 0.7,
-                  maxOutputTokens: MAX_OUTPUT_TOKENS,
-                  systemInstruction: systemInstruction ? { parts: [{ text: systemInstruction }] } : undefined,
-                },
-              })
-              .then((res) => res.text || '')
-          );
-
-          effectiveModelUsed = effectiveModel;
-          return text;
-        })
+      const result = await this.executeWithFallback<string>(
+        'text_generation',
+        () => geminiProvider.generateText(prompt, systemInstruction),
+        () => groqProvider.generateText(prompt, systemInstruction),
+        companyId,
+        userId
       );
 
       const latencyMs = Date.now() - startTime;
@@ -422,11 +381,16 @@ class CentralizedAIService {
         timestamp: new Date().toISOString(),
         success: true,
         cached: false,
-        model: effectiveModelUsed,
+        model: `${result.provider}:${result.model}`,
         latencyMs,
       });
 
-      return { response: responseText, model: effectiveModelUsed, latencyMs };
+      return {
+        response: result.response,
+        model: result.model,
+        provider: result.provider,
+        latencyMs,
+      };
     } catch (err: any) {
       const latencyMs = Date.now() - startTime;
       aiLogger.log({
@@ -436,7 +400,7 @@ class CentralizedAIService {
         timestamp: new Date().toISOString(),
         success: false,
         cached: false,
-        model: effectiveModelUsed,
+        model: 'all_providers_failed',
         latencyMs,
         error: err?.message,
       });
