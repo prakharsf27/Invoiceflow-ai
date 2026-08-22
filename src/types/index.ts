@@ -27,6 +27,56 @@ export type ExceptionType =
 
 export type ExceptionSeverity = 'critical' | 'review' | 'informational';
 
+export type AppDocumentType = 'unknown' | 'invoice' | 'purchase_order';
+export type AppDocumentProcessingStatus = 'uploaded' | 'queued' | 'processing' | 'processed' | 'failed';
+export type AppDocumentExtractionStatus = 'pending' | 'processing' | 'extracted' | 'failed';
+
+export interface AppDocumentValidationCheck {
+  id: string;
+  title: string;
+  passed: boolean;
+  type: 'success' | 'warning' | 'critical' | 'info';
+  detail: string;
+}
+
+export interface AppDocumentPOMatchResult {
+  purchaseOrderId?: string;
+  poNumber?: string;
+  matchStatus: 'matched' | 'partial_match' | 'mismatch' | 'no_match' | 'needs_review';
+  matchScore: number;
+  matchedFields: string[];
+  discrepancies: string[];
+  poDetails?: {
+    poNumber?: string;
+    supplierName?: string;
+    totalAmount?: number;
+  };
+}
+
+export interface AppDocument {
+  id: string;
+  companyId: string;
+  uploadedBy: string;
+  originalFileName: string;
+  fileName: string;
+  mimeType: string;
+  fileSize: number;
+  fileHash?: string;
+  documentType: AppDocumentType;
+  storagePath: string;
+  storageReference: string;
+  processingStatus: AppDocumentProcessingStatus;
+  extractionStatus: AppDocumentExtractionStatus;
+  extractionError?: string;
+  extractedData?: any;
+  validationResults?: AppDocumentValidationCheck[];
+  matchResult?: AppDocumentPOMatchResult;
+  extractedAt?: string;
+  linkedRecordId?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface InvoiceItem {
   id: string;
   description: string;

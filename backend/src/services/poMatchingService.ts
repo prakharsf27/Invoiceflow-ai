@@ -1,0 +1,172 @@
+import { PurchaseOrderModel } from '../models/PurchaseOrder.js';
+import { DocumentModel } from '../models/Document.js';
+import { IPOMatchResult } from '../models/Document.js';
+
+class POMatchingService {
+  /**
+   * Automatically search company-scoped POs for candidate matches.
+   * Runs 100% deterministically in TypeScript without calling Gemini AI.
+   */
+  public async matchInvoiceToPO(
+    companyId: string,
+    extractedInvoice: any
+  ): Promise<IPOMatchResult> {
+    const poNumber = (extractedInvoice?.poNumber || '').trim();
+    const supplierGstin = (extractedInvoice?.supplierGstin || '').trim();
+    const supplierName = (extractedInvoice?.supplierName || '').trim();
+    const invoiceTotal = typeof extractedInvoice?.amount === 'number'
+      ? extractedInvoice.amount
+      : typeof extractedInvoice?.total === 'number'
+      ? extractedInvoice.total
+      : 0;
+
+    let candidatePO: any = null;
+
+    // 1. Priority 1: Exact PO Number Match in PurchaseOrders collection
+    if (poNumber) {
+      candidatePO = await PurchaseOrderModel.findOne({
+        companyId,
+        poNumber: new RegExp(`^${poNumber.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i'),
+      } as any);
+    }
+
+    // 2. Priority 2: Look for extracted PO Documents in Document collection
+    if (!candidatePO && poNumber) {
+      const poDoc: any = await DocumentModel.findOne({
+        companyId,
+        documentType: 'purchase_order',
+        $or: [
+          { 'extractedData.poNumber': new RegExp(`^${poNumber.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') },
+          { originalFileName: new RegExp(poNumber.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i') },
+        ],
+      } as any);
+
+      if (poDoc && poDoc.extractedData) {
+        candidatePO = {
+          poNumber: poDoc.extractedData.poNumber || poNumber,
+          supplierName: poDoc.extractedData.supplierName || supplierName,
+          totalAmount: poDoc.extractedData.total || 0,
+          items: poDoc.extractedData.lineItems || [],
+          isDocReference: true,
+        };
+      }
+    }
+
+    // 3. Priority 3: Match by Supplier GSTIN / Name if no direct PO number
+    if (!candidatePO && (supplierGstin || supplierName)) {
+      const orConds: any[] = [];
+      if (supplierGstin) orConds.push({ supplierGstin: new RegExp(`^${supplierGstin}$`, 'i') });
+      if (supplierName) orConds.push({ supplierName: new RegExp(supplierName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i') });
+
+      candidatePO = await PurchaseOrderModel.findOne({
+        companyId,
+        $or: orConds,
+      } as any);
+    }
+
+    // Handle case where no candidate PO is found
+    if (!candidatePO) {
+      return {
+        poNumber: poNumber || undefined,
+        matchStatus: poNumber ? 'no_match' : 'no_match',
+        matchScore: 0,
+        matchedFields: [],
+        discrepancies: poNumber
+          ? [`Purchase Order ${poNumber} referenced on invoice was not found in company procurement records.`]
+          : ['No purchase order reference or supplier PO found in company records.'],
+      };
+    }
+
+    // Perform deterministic matching comparison
+    const matchedFields: string[] = [];
+    const discrepancies: string[] = [];
+    let score = 0;
+
+    // A. PO Number Match Check
+    const poNumMatch = poNumber && candidatePO.poNumber && poNumber.toLowerCase() === candidatePO.poNumber.toLowerCase();
+    if (poNumMatch) {
+      matchedFields.push('PO Number');
+      score += 35;
+    } else if (poNumber) {
+      discrepancies.push(`Invoice references PO ${poNumber}, but matched PO record is ${candidatePO.poNumber}.`);
+    }
+
+    // B. Supplier Match Check
+    const candidateSupplierName = candidatePO.supplierName || '';
+    const normInvSup = supplierName.toLowerCase().replace(/[^a-z0-9]/g, '');
+    const normPoSup = candidateSupplierName.toLowerCase().replace(/[^a-z0-9]/g, '');
+
+    if (normInvSup && normPoSup && (normInvSup.includes(normPoSup) || normPoSup.includes(normInvSup))) {
+      matchedFields.push('Supplier Identity');
+      score += 25;
+    } else if (supplierName && candidateSupplierName) {
+      discrepancies.push(`Supplier name "${supplierName}" differs from PO supplier "${candidateSupplierName}".`);
+    }
+
+    // C. Total Amount Match Check
+    const poTotal = candidatePO.totalAmount ?? candidatePO.total ?? 0;
+    const amountVariance = Math.abs(invoiceTotal - poTotal);
+
+    if (invoiceTotal > 0 && poTotal > 0) {
+      if (amountVariance <= 2.0) {
+        matchedFields.push('Total Amount');
+        score += 25;
+      } else {
+        const diffStr = (invoiceTotal - poTotal).toLocaleString('en-IN');
+        discrepancies.push(`Total amount variance: Invoice (₹${invoiceTotal.toLocaleString('en-IN')}) vs PO (₹${poTotal.toLocaleString('en-IN')}) [Diff: ${invoiceTotal > poTotal ? '+' : ''}₹${diffStr}].`);
+      }
+    }
+
+    // D. Line Items Match Check
+    const invItems = Array.isArray(extractedInvoice?.lineItems) ? extractedInvoice.lineItems : [];
+    const poItems = Array.isArray(candidatePO.items) ? candidatePO.items : [];
+
+    if (invItems.length > 0 && poItems.length > 0) {
+      let matchedItemCount = 0;
+      invItems.forEach((invItem: any) => {
+        const itemDesc = (invItem.description || '').toLowerCase();
+        const itemMatch = poItems.some((poItem: any) => {
+          const poDesc = (poItem.description || '').toLowerCase();
+          return itemDesc.includes(poDesc) || poDesc.includes(itemDesc);
+        });
+        if (itemMatch) matchedItemCount++;
+      });
+
+      if (matchedItemCount > 0) {
+        matchedFields.push('Line Item Descriptions & Quantities');
+        score += 15;
+      }
+    } else if (invItems.length > 0) {
+      matchedFields.push('Quantity & Rates Verified');
+      score += 15;
+    }
+
+    // Determine final status based on score and discrepancies
+    let matchStatus: IPOMatchResult['matchStatus'] = 'no_match';
+    if (score >= 90 && discrepancies.length === 0) {
+      matchStatus = 'matched';
+    } else if (score >= 60 || (poNumMatch && discrepancies.length <= 1)) {
+      matchStatus = 'partial_match';
+    } else if (discrepancies.length > 0) {
+      matchStatus = 'mismatch';
+    } else {
+      matchStatus = 'needs_review';
+    }
+
+    return {
+      purchaseOrderId: candidatePO.id || candidatePO._id?.toString(),
+      poNumber: candidatePO.poNumber,
+      matchStatus,
+      matchScore: Math.min(100, score),
+      matchedFields,
+      discrepancies,
+      poDetails: {
+        poNumber: candidatePO.poNumber,
+        supplierName: candidatePO.supplierName,
+        totalAmount: poTotal,
+      },
+    };
+  }
+}
+
+export const poMatchingService = new POMatchingService();

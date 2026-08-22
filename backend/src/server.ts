@@ -18,6 +18,7 @@ import exceptionRoutes from "./routes/exceptionRoutes.js";
 import copilotRoutes from "./routes/copilotRoutes.js";
 import dashboardRoutes from "./routes/dashboardRoutes.js";
 import aiRoutes from "./routes/aiRoutes.js";
+import documentRoutes from "./routes/documentRoutes.js";
 
 import { requireAuth } from "./middleware/auth.js";
 
@@ -52,6 +53,7 @@ app.use("/api/exceptions", requireAuth, exceptionRoutes);
 app.use("/api/copilot", requireAuth, copilotRoutes);
 app.use("/api/dashboard", requireAuth, dashboardRoutes);
 app.use("/api/ai", requireAuth, aiRoutes);
+app.use("/api/documents", documentRoutes);
 
 // const autoSeed = async () => {
 //   try {

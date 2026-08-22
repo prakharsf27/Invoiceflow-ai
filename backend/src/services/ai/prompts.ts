@@ -1,12 +1,93 @@
 /**
- * Centralized, bounded AI prompts and system instructions.
- * Designed to minimize token consumption and ensure deterministic JSON responses.
+ * Centralized, bounded AI prompts and system instructions for Document Extraction & Classification.
+ * Designed to minimize token consumption and ensure strict JSON schema responses.
  */
 
 export const DEFAULT_GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
 export const MAX_OUTPUT_TOKENS = 2048;
 
 export const PROMPTS = {
+  INVOICE_EXTRACTION_SYSTEM_INSTRUCTION: `You are an enterprise financial OCR AI assistant.
+Extract information visibly present in the supplied invoice document.
+Never infer, fabricate, or guess missing values. Return null if unreadable or absent.
+
+Return strict JSON matching this schema:
+{
+  "documentType": "invoice",
+  "confidence": number between 0.0 and 1.0,
+  "invoiceNumber": string or null,
+  "supplierName": string or null,
+  "supplierGstin": string or null,
+  "supplierEmail": string or null,
+  "supplierPhone": string or null,
+  "invoiceDate": "YYYY-MM-DD" or null,
+  "dueDate": "YYYY-MM-DD" or null,
+  "poNumber": string or null,
+  "currency": string or null,
+  "subtotal": number or null,
+  "tax": number or null,
+  "discount": number or null,
+  "amount": number or null,
+  "paymentTerms": string or null,
+  "bankDetails": {
+    "accountNumber": string or null,
+    "ifsc": string or null,
+    "bankName": string or null
+  },
+  "lineItems": [
+    {
+      "description": string,
+      "quantity": number or null,
+      "unitPrice": number or null,
+      "taxRate": number or null,
+      "taxAmount": number or null,
+      "total": number or null
+    }
+  ]
+}
+Return ONLY valid JSON with no markdown syntax.`,
+
+  PO_EXTRACTION_SYSTEM_INSTRUCTION: `You are an enterprise procurement OCR AI assistant.
+Extract information visibly present in the supplied Purchase Order (PO) document.
+Never infer, fabricate, or guess missing values. Return null if unreadable or absent.
+
+Return strict JSON matching this schema:
+{
+  "documentType": "purchase_order",
+  "confidence": number between 0.0 and 1.0,
+  "poNumber": string or null,
+  "supplierName": string or null,
+  "supplierGstin": string or null,
+  "supplierEmail": string or null,
+  "poDate": "YYYY-MM-DD" or null,
+  "expectedDeliveryDate": "YYYY-MM-DD" or null,
+  "currency": string or null,
+  "subtotal": number or null,
+  "tax": number or null,
+  "total": number or null,
+  "lineItems": [
+    {
+      "description": string,
+      "quantity": number or null,
+      "unitPrice": number or null,
+      "taxRate": number or null,
+      "taxAmount": number or null,
+      "total": number or null
+    }
+  ]
+}
+Return ONLY valid JSON with no markdown syntax.`,
+
+  CLASSIFICATION_SYSTEM_INSTRUCTION: `You are a document classifier AI.
+Analyze the supplied document and determine if it is a financial "invoice", a "purchase_order", or "unknown".
+
+Return strict JSON matching:
+{
+  "documentType": "invoice" | "purchase_order" | "unknown",
+  "confidence": number between 0.0 and 1.0
+}
+Return ONLY valid JSON.`,
+
   OCR_SYSTEM_INSTRUCTION: `You are a strict, enterprise-grade financial OCR AI assistant.
 Only extract information visibly present in the supplied document.
 Never infer, fabricate, guess, or create plausible values.
