@@ -141,7 +141,7 @@ class CentralizedAIService {
   public async extractDocumentMedia(
     fileBuffer: Buffer,
     mimeType: string,
-    context?: { companyId?: string; userId?: string }
+    context?: { companyId?: string; userId?: string; systemInstruction?: string }
   ): Promise<{ jsonText: string; model: string; provider: 'gemini' | 'groq'; latencyMs: number }> {
     if (!this.isConfigured()) {
       throw new Error('No AI provider configured. Please set GEMINI_API_KEY or GROQ_API_KEY in environment.');
@@ -150,12 +150,13 @@ class CentralizedAIService {
     const companyId = context?.companyId || 'company-demo-01';
     const userId = context?.userId;
     const startTime = Date.now();
+    const options = context?.systemInstruction ? { systemInstruction: context.systemInstruction } : undefined;
 
     try {
       const result = await this.executeWithFallback<string>(
         'ocr_extraction',
-        () => geminiProvider.extractDocumentMedia(fileBuffer, mimeType),
-        () => groqProvider.extractDocumentMedia(fileBuffer, mimeType),
+        () => geminiProvider.extractDocumentMedia(fileBuffer, mimeType, options),
+        () => groqProvider.extractDocumentMedia(fileBuffer, mimeType, options),
         companyId,
         userId
       );

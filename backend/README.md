@@ -9,7 +9,7 @@ Node.js + Express + TypeScript backend service for InvoiceFlow AI, supporting mu
 InvoiceFlow AI implements a resilient, multi-provider AI fallback pipeline:
 
 ```
-                  Invoice / Query Request
+                  Invoice / Copilot Request
                              │
                       AI Service Layer
                              │
@@ -25,6 +25,14 @@ InvoiceFlow AI implements a resilient, multi-provider AI fallback pipeline:
                              │
                     Normalized Result
 ```
+
+### Active Provider Models
+
+- **Primary Provider**: **Google Gemini** (`GEMINI_API_KEY`)
+  - Primary Model: `gemini-2.5-flash` (Fallback: `gemini-3.6-flash`, `gemini-flash-latest`)
+- **Fallback Provider**: **Groq** (`GROQ_API_KEY`)
+  - Text & Reasoning Primary: `openai/gpt-oss-120b` (Fallback: `openai/gpt-oss-20b`)
+  - Document / Vision / OCR Primary: `qwen/qwen3.6-27b`
 
 ### Fallback Rules
 1. **Normal Flow**: The system routes AI requests to **Google Gemini** (`GEMINI_API_KEY`).
@@ -86,5 +94,5 @@ npm start
    [AI] Gemini failed for text_generation: RESOURCE_EXHAUSTED
    [AI] Gemini unavailable/rate limited. Preparing fallback to Groq...
    [AI] Falling back to Groq (text_generation)...
-   [AI] Groq succeeded (llama-3.3-70b-versatile)
+   [AI] Groq succeeded (openai/gpt-oss-120b)
    ```

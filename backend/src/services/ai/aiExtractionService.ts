@@ -56,9 +56,37 @@ export interface ExtractedPOData {
   }>;
 }
 
+/**
+ * Helper to extract number safely from raw AI response payloads,
+ * handling plain numbers, formatted numeric strings, or nested { value, confidence } objects.
+ */
+const extractNumber = (val: any): number | null => {
+  if (typeof val === 'number' && !isNaN(val)) return val;
+  if (typeof val === 'string') {
+    const parsedNum = parseFloat(val.replace(/[^0-9.-]/g, ''));
+    return isNaN(parsedNum) ? null : parsedNum;
+  }
+  if (val && typeof val === 'object') {
+    return extractNumber(val.value);
+  }
+  return null;
+};
+
+/**
+ * Helper to extract string safely from raw AI response payloads,
+ * handling plain strings or nested { value, confidence } objects.
+ */
+const extractString = (val: any): string | null => {
+  if (typeof val === 'string' && val.trim() !== '') return val.trim();
+  if (val && typeof val === 'object' && typeof val.value === 'string' && val.value.trim() !== '') {
+    return val.value.trim();
+  }
+  return null;
+};
+
 class AIExtractionService {
   /**
-   * Extract invoice fields using Gemini multimodal capabilities.
+   * Extract invoice fields using Gemini/Groq multimodal capabilities.
    */
   public async extractInvoiceDocument(
     fileBuffer: Buffer,
@@ -68,7 +96,10 @@ class AIExtractionService {
     const { jsonText, model } = await aiService.extractDocumentMedia(
       fileBuffer,
       mimeType,
-      context
+      {
+        ...context,
+        systemInstruction: PROMPTS.INVOICE_EXTRACTION_SYSTEM_INSTRUCTION,
+      }
     );
 
     const cleaned = jsonText
@@ -84,36 +115,40 @@ class AIExtractionService {
       throw new Error(`Failed to parse AI extraction JSON: ${err?.message || 'Invalid JSON format'}`);
     }
 
+    const subtotal = extractNumber(parsed.subtotal);
+    const tax = extractNumber(parsed.tax);
+    const amount = extractNumber(parsed.amount) ?? extractNumber(parsed.total);
+
     const data: ExtractedInvoiceData = {
       documentType: 'invoice',
       confidence: typeof parsed.confidence === 'number' ? parsed.confidence : 0.85,
-      invoiceNumber: typeof parsed.invoiceNumber === 'string' && parsed.invoiceNumber.trim() ? parsed.invoiceNumber.trim() : (parsed.invoiceNumber?.value || null),
-      supplierName: typeof parsed.supplierName === 'string' && parsed.supplierName.trim() ? parsed.supplierName.trim() : (parsed.supplierName?.value || null),
-      supplierGstin: typeof parsed.supplierGstin === 'string' && parsed.supplierGstin.trim() ? parsed.supplierGstin.trim() : (parsed.supplierGSTIN?.value || null),
-      supplierEmail: typeof parsed.supplierEmail === 'string' ? parsed.supplierEmail.trim() : null,
-      supplierPhone: typeof parsed.supplierPhone === 'string' ? parsed.supplierPhone.trim() : null,
-      invoiceDate: typeof parsed.invoiceDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(parsed.invoiceDate) ? parsed.invoiceDate : (parsed.invoiceDate?.value || null),
-      dueDate: typeof parsed.dueDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(parsed.dueDate) ? parsed.dueDate : (parsed.dueDate?.value || null),
-      poNumber: typeof parsed.poNumber === 'string' && parsed.poNumber.trim() ? parsed.poNumber.trim() : (parsed.poNumber?.value || null),
-      currency: typeof parsed.currency === 'string' ? parsed.currency : (parsed.currency?.value || 'INR'),
-      subtotal: typeof parsed.subtotal === 'number' ? parsed.subtotal : (parsed.subtotal?.value || null),
-      tax: typeof parsed.tax === 'number' ? parsed.tax : (parsed.tax?.value || null),
-      discount: typeof parsed.discount === 'number' ? parsed.discount : 0,
-      amount: typeof parsed.amount === 'number' ? parsed.amount : (parsed.total?.value || parsed.total || null),
-      paymentTerms: typeof parsed.paymentTerms === 'string' ? parsed.paymentTerms : (parsed.paymentTerms?.value || 'Net 15 Days'),
+      invoiceNumber: extractString(parsed.invoiceNumber),
+      supplierName: extractString(parsed.supplierName),
+      supplierGstin: extractString(parsed.supplierGstin) || extractString(parsed.supplierGSTIN),
+      supplierEmail: extractString(parsed.supplierEmail),
+      supplierPhone: extractString(parsed.supplierPhone),
+      invoiceDate: extractString(parsed.invoiceDate),
+      dueDate: extractString(parsed.dueDate),
+      poNumber: extractString(parsed.poNumber),
+      currency: extractString(parsed.currency) || 'INR',
+      subtotal,
+      tax,
+      discount: extractNumber(parsed.discount) || 0,
+      amount,
+      paymentTerms: extractString(parsed.paymentTerms) || 'Net 15 Days',
       bankDetails: {
-        accountNumber: parsed.bankDetails?.accountNumber || null,
-        ifsc: parsed.bankDetails?.ifsc || null,
-        bankName: parsed.bankDetails?.bankName || null,
+        accountNumber: extractString(parsed.bankDetails?.accountNumber),
+        ifsc: extractString(parsed.bankDetails?.ifsc),
+        bankName: extractString(parsed.bankDetails?.bankName),
       },
       lineItems: Array.isArray(parsed.lineItems)
         ? parsed.lineItems.map((item: any) => ({
-            description: String(item.description || 'Item').trim(),
-            quantity: typeof item.quantity === 'number' ? item.quantity : null,
-            unitPrice: typeof item.unitPrice === 'number' ? item.unitPrice : null,
-            taxRate: typeof item.taxRate === 'number' ? item.taxRate : null,
-            taxAmount: typeof item.taxAmount === 'number' ? item.taxAmount : null,
-            total: typeof item.total === 'number' ? item.total : (typeof item.amount === 'number' ? item.amount : null),
+            description: String(extractString(item.description) || 'Item').trim(),
+            quantity: extractNumber(item.quantity),
+            unitPrice: extractNumber(item.unitPrice),
+            taxRate: extractNumber(item.taxRate),
+            taxAmount: extractNumber(item.taxAmount),
+            total: extractNumber(item.total) ?? extractNumber(item.amount),
           }))
         : [],
     };
@@ -122,7 +157,7 @@ class AIExtractionService {
   }
 
   /**
-   * Extract Purchase Order fields using Gemini multimodal capabilities.
+   * Extract Purchase Order fields using Gemini/Groq multimodal capabilities.
    */
   public async extractPODocument(
     fileBuffer: Buffer,
@@ -132,7 +167,10 @@ class AIExtractionService {
     const { jsonText, model } = await aiService.extractDocumentMedia(
       fileBuffer,
       mimeType,
-      context
+      {
+        ...context,
+        systemInstruction: PROMPTS.PO_EXTRACTION_SYSTEM_INSTRUCTION,
+      }
     );
 
     const cleaned = jsonText
@@ -148,27 +186,31 @@ class AIExtractionService {
       throw new Error(`Failed to parse AI PO extraction JSON: ${err?.message || 'Invalid JSON'}`);
     }
 
+    const subtotal = extractNumber(parsed.subtotal);
+    const tax = extractNumber(parsed.tax);
+    const total = extractNumber(parsed.total) ?? extractNumber(parsed.amount);
+
     const data: ExtractedPOData = {
       documentType: 'purchase_order',
       confidence: typeof parsed.confidence === 'number' ? parsed.confidence : 0.85,
-      poNumber: typeof parsed.poNumber === 'string' && parsed.poNumber.trim() ? parsed.poNumber.trim() : null,
-      supplierName: typeof parsed.supplierName === 'string' && parsed.supplierName.trim() ? parsed.supplierName.trim() : null,
-      supplierGstin: typeof parsed.supplierGstin === 'string' ? parsed.supplierGstin.trim() : null,
-      supplierEmail: typeof parsed.supplierEmail === 'string' ? parsed.supplierEmail.trim() : null,
-      poDate: typeof parsed.poDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(parsed.poDate) ? parsed.poDate : null,
-      expectedDeliveryDate: typeof parsed.expectedDeliveryDate === 'string' ? parsed.expectedDeliveryDate : null,
-      currency: typeof parsed.currency === 'string' ? parsed.currency : 'INR',
-      subtotal: typeof parsed.subtotal === 'number' ? parsed.subtotal : null,
-      tax: typeof parsed.tax === 'number' ? parsed.tax : null,
-      total: typeof parsed.total === 'number' ? parsed.total : (typeof parsed.amount === 'number' ? parsed.amount : null),
+      poNumber: extractString(parsed.poNumber),
+      supplierName: extractString(parsed.supplierName),
+      supplierGstin: extractString(parsed.supplierGstin),
+      supplierEmail: extractString(parsed.supplierEmail),
+      poDate: extractString(parsed.poDate),
+      expectedDeliveryDate: extractString(parsed.expectedDeliveryDate),
+      currency: extractString(parsed.currency) || 'INR',
+      subtotal,
+      tax,
+      total,
       lineItems: Array.isArray(parsed.lineItems)
         ? parsed.lineItems.map((item: any) => ({
-            description: String(item.description || 'Item').trim(),
-            quantity: typeof item.quantity === 'number' ? item.quantity : null,
-            unitPrice: typeof item.unitPrice === 'number' ? item.unitPrice : null,
-            taxRate: typeof item.taxRate === 'number' ? item.taxRate : null,
-            taxAmount: typeof item.taxAmount === 'number' ? item.taxAmount : null,
-            total: typeof item.total === 'number' ? item.total : (typeof item.amount === 'number' ? item.amount : null),
+            description: String(extractString(item.description) || 'Item').trim(),
+            quantity: extractNumber(item.quantity),
+            unitPrice: extractNumber(item.unitPrice),
+            taxRate: extractNumber(item.taxRate),
+            taxAmount: extractNumber(item.taxAmount),
+            total: extractNumber(item.total) ?? extractNumber(item.amount),
           }))
         : [],
     };
@@ -177,7 +219,7 @@ class AIExtractionService {
   }
 
   /**
-   * Fallback classification for unknown documents using Gemini AI.
+   * Fallback classification for unknown documents using Gemini/Groq AI.
    */
   public async classifyUnknownDocument(
     fileBuffer: Buffer,
