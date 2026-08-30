@@ -12,8 +12,10 @@ class AIRateLimiter {
   private buckets = new Map<string, RateBucket>();
 
   private getMaxPerMinute(): number {
-    const val = parseInt(process.env.AI_MAX_REQUESTS_PER_MINUTE || '20', 10);
-    return isNaN(val) || val <= 0 ? 20 : val;
+    // Gemini free tier: 15 RPM. Default to 10 to leave headroom for retries.
+    // Override via AI_MAX_REQUESTS_PER_MINUTE env var.
+    const val = parseInt(process.env.AI_MAX_REQUESTS_PER_MINUTE || '10', 10);
+    return isNaN(val) || val <= 0 ? 10 : val;
   }
 
   private getMaxPerDay(): number {

@@ -29,20 +29,38 @@ export function isRetryableAIError(error: any): boolean {
 
   const message = (error.message || String(error)).toLowerCase();
   const status = error.status || error.statusCode || error.response?.status;
+  const code = (error.code || error.errorCode || '').toString().toLowerCase();
 
-  // 1. Explicit Status Codes
+  // 1. Explicit HTTP status codes that are retryable
   if (status === 429 || status === 503 || status === 502 || status === 504) {
     return true;
   }
 
-  // 2. Rate Limit & Resource Exhaustion Keyphrases
+  // 2. Explicit non-retryable codes — invalid API key, bad request format, auth
+  const permanentPhrases = [
+    'api_key_invalid',
+    'api key not valid',
+    'invalid_argument',
+    'invalid_api_key',
+    'permission_denied',
+    'unauthorized',
+    'unauthenticated',
+  ];
+  if (permanentPhrases.some((p) => message.includes(p) || code.includes(p))) {
+    return false;
+  }
+
+  // 3. Rate limit, quota, and resource exhaustion signals
   const retryablePhrases = [
     'resource_exhausted',
     'resourceexhausted',
+    'resource exhausted',
     'rate_limit',
     'ratelimit',
+    'rate limit',
     'quota_exceeded',
     'quota exceeded',
+    'quota',
     '429',
     '503',
     'service_unavailable',
@@ -57,6 +75,11 @@ export function isRetryableAIError(error: any): boolean {
     'fetch failed',
     'network error',
     'socket hang up',
+    'per-minute',
+    'per_minute',
+    'retry in',
+    'try again',
+    'throttl',
   ];
 
   return retryablePhrases.some((phrase) => message.includes(phrase));

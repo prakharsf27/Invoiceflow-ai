@@ -86,26 +86,27 @@ class CentralizedAIService {
     if (geminiProvider.isConfigured()) {
       console.log(`[AI] Trying Gemini (${operationName})...`);
       try {
-        const result = await aiQueue.enqueue(() =>
-          withAIRetry(async () => {
-            this.checkRateLimit(companyId, userId);
-            aiRateLimiter.consume(limitKey);
-            return await geminiOp();
-          })
-        );
+        // Rate-limit check & consume happen BEFORE the retry wrapper.
+        // This ensures: (a) we don't consume tokens on every retry attempt,
+        // and (b) an app-side quota error doesn't get confused with a Gemini error.
+        this.checkRateLimit(companyId, userId);
+        aiRateLimiter.consume(limitKey);
+
+        const result = await aiQueue.enqueue(() => withAIRetry(() => geminiOp()));
         console.log(`[AI] Gemini succeeded (${result.model})`);
         return result;
       } catch (geminiErr: any) {
         const errMsg = geminiErr?.message || String(geminiErr);
         console.warn(`[AI] Gemini failed for ${operationName}: ${errMsg}`);
 
-        // Only fallback to Groq if the error is a provider availability / rate-limit / 429 error
+        // Fallback to Groq on any rate-limit, quota, or availability error.
         if (!isRetryableAIError(geminiErr)) {
-          console.error(`[AI] Non-retryable application/validation error in Gemini. Skipping fallback.`);
+          console.error(`[AI] Non-retryable error from Gemini (not a rate limit). Skipping fallback.`);
+          console.error(`[AI] Error detail: ${errMsg}`);
           throw geminiErr;
         }
 
-        console.warn(`[AI] Gemini unavailable/rate limited. Preparing fallback to Groq...`);
+        console.warn(`[AI] Gemini unavailable/rate limited → falling back to Groq...`);
       }
     } else {
       console.warn(`[AI] Gemini is not configured. Falling back directly to Groq...`);
@@ -115,20 +116,13 @@ class CentralizedAIService {
     if (groqProvider.isConfigured()) {
       console.log(`[AI] Falling back to Groq (${operationName})...`);
       try {
-        const result = await aiQueue.enqueue(() =>
-          withAIRetry(async () => {
-            this.checkRateLimit(companyId, userId);
-            aiRateLimiter.consume(limitKey);
-            return await groqOp();
-          })
-        );
+        const result = await aiQueue.enqueue(() => withAIRetry(() => groqOp()));
         console.log(`[AI] Groq succeeded (${result.model})`);
         return result;
       } catch (groqErr: any) {
         const groqMsg = groqErr?.message || String(groqErr);
         console.error(`[AI] Groq fallback failed for ${operationName}: ${groqMsg}`);
-        console.error(`[AI] All AI providers unavailable.`);
-        throw new Error(`AI processing unavailable across all providers (Gemini & Groq). Please try again shortly.`);
+        throw new Error(`AI processing unavailable. Both Gemini and Groq failed. Please try again shortly.`);
       }
     }
 

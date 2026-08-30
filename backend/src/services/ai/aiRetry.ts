@@ -1,7 +1,14 @@
 /**
  * Exponential backoff and retry helper for AI API requests.
  * Handles rate limits (HTTP 429, RESOURCE_EXHAUSTED) and transient network errors gracefully.
+ *
+ * Key behaviors:
+ * - Respects the provider's Retry-After header or error message delay hint
+ * - Does NOT retry permanent errors (bad API key, invalid argument)
+ * - Caps maximum wait at 30 seconds per attempt to avoid indefinite stalls
  */
+
+import { isRetryableAIError } from './types.js';
 
 export interface RetryOptions {
   maxRetries?: number;
@@ -10,13 +17,39 @@ export interface RetryOptions {
   backoffFactor?: number;
 }
 
+/**
+ * Extract the retry delay in ms from an error object.
+ * Gemini and Groq both encode retry-after hints in slightly different ways.
+ */
+function extractRetryAfterMs(error: any): number | null {
+  // 1. HTTP header: Retry-After (seconds)
+  const retryAfterHeader =
+    error?.headers?.['retry-after'] ||
+    error?.response?.headers?.['retry-after'] ||
+    error?.retryAfter;
+  if (retryAfterHeader) {
+    const sec = parseInt(String(retryAfterHeader), 10);
+    if (!isNaN(sec) && sec > 0) return sec * 1000;
+  }
+
+  // 2. Error message: "retry in N second(s)" or "please retry in N seconds"
+  const msg = String(error?.message || error || '').toLowerCase();
+  const match = msg.match(/retry[^\d]*in[^\d]*(\d+)\s*s/);
+  if (match) {
+    const sec = parseInt(match[1], 10);
+    if (!isNaN(sec) && sec > 0) return sec * 1000;
+  }
+
+  return null;
+}
+
 export async function withAIRetry<T>(
   operation: () => Promise<T>,
   options?: RetryOptions
 ): Promise<T> {
-  const maxRetries = options?.maxRetries ?? 3;
-  const initialDelayMs = options?.initialDelayMs ?? 1000;
-  const maxDelayMs = options?.maxDelayMs ?? 8000;
+  const maxRetries = options?.maxRetries ?? 2;
+  const initialDelayMs = options?.initialDelayMs ?? 2000;
+  const maxDelayMs = options?.maxDelayMs ?? 30000; // respect provider's hint up to 30s
   const backoffFactor = options?.backoffFactor ?? 2;
 
   let attempt = 0;
@@ -27,45 +60,30 @@ export async function withAIRetry<T>(
       return await operation();
     } catch (error: any) {
       attempt++;
-      const errorMessage = error?.message || String(error);
-      const isRateLimit =
-        errorMessage.includes('429') ||
-        errorMessage.includes('RESOURCE_EXHAUSTED') ||
-        errorMessage.includes('quota') ||
-        errorMessage.includes('rate limit');
-      const isTransient =
-        isRateLimit ||
-        errorMessage.includes('503') ||
-        errorMessage.includes('UNAVAILABLE') ||
-        errorMessage.includes('DEADLINE_EXCEEDED') ||
-        errorMessage.includes('timeout') ||
-        errorMessage.includes('ECONNRESET');
 
-      // Do not retry permanent client errors (e.g. invalid API key or invalid format)
-      const isPermanent =
-        errorMessage.includes('API_KEY_INVALID') ||
-        errorMessage.includes('API key not valid') ||
-        errorMessage.includes('INVALID_ARGUMENT');
-
-      if (isPermanent || !isTransient || attempt > maxRetries) {
+      // Never retry permanent errors (bad API key, malformed request)
+      if (!isRetryableAIError(error)) {
         throw error;
       }
 
-      // Check if error contains explicit Retry-After delay
-      let waitMs = delay;
-      if (error?.status === 429 && error?.headers?.['retry-after']) {
-        const retryAfterSec = parseInt(error.headers['retry-after'], 10);
-        if (!isNaN(retryAfterSec) && retryAfterSec > 0) {
-          waitMs = retryAfterSec * 1000;
-        }
+      if (attempt > maxRetries) {
+        throw error;
       }
 
-      // Add small jitter (±15%) to avoid synchronized retry storms
-      const jitter = waitMs * 0.15 * (Math.random() * 2 - 1);
-      const actualWaitMs = Math.min(maxDelayMs, Math.max(200, Math.round(waitMs + jitter)));
+      // Prefer the provider's own retry-after hint if available
+      const providerHintMs = extractRetryAfterMs(error);
+      const baseWaitMs = providerHintMs !== null
+        ? Math.min(providerHintMs, maxDelayMs)
+        : Math.min(delay, maxDelayMs);
 
+      // Add small jitter (±10%) to avoid synchronized retry storms
+      const jitter = baseWaitMs * 0.10 * (Math.random() * 2 - 1);
+      const actualWaitMs = Math.max(500, Math.round(baseWaitMs + jitter));
+
+      const errorMessage = (error?.message || String(error)).slice(0, 80);
       console.warn(
-        `[AI-RETRY] Attempt ${attempt}/${maxRetries} failed (${errorMessage.slice(0, 60)}...). Retrying in ${actualWaitMs}ms...`
+        `[AI-RETRY] Attempt ${attempt}/${maxRetries} failed: "${errorMessage}". ` +
+        `Waiting ${(actualWaitMs / 1000).toFixed(1)}s before retry${providerHintMs ? ' (provider hint)' : ''}...`
       );
 
       await new Promise((resolve) => setTimeout(resolve, actualWaitMs));
