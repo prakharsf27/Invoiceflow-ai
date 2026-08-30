@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
+import mongoose from 'mongoose';
 import { UserModel, UserRole } from '../models/User.js';
 import { getJwtSecret } from '../middleware/auth.js';
 
@@ -132,6 +133,7 @@ export const register = async (req: Request, res: Response): Promise<void> => {
  * Authenticate user credentials and return JWT token.
  */
 export const login = async (req: Request, res: Response): Promise<void> => {
+  const reqStart = Date.now();
   try {
     const { email, password } = req.body;
 
@@ -144,7 +146,13 @@ export const login = async (req: Request, res: Response): Promise<void> => {
     }
 
     const cleanEmail = String(email).toLowerCase().trim();
+    console.log(`[AUTH] Login request received`);
+    console.log(`[AUTH] MongoDB ready: ${mongoose.connection.readyState === 1}`);
+
+    const tLookup = Date.now();
     const user = await UserModel.findOne({ email: cleanEmail });
+    const lookupDuration = Date.now() - tLookup;
+    console.log(`[AUTH] User lookup completed: ${lookupDuration}ms`);
 
     if (!user || !user.isActive) {
       res.status(401).json({
@@ -154,7 +162,11 @@ export const login = async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
+    const tVerify = Date.now();
     const isPasswordValid = await bcrypt.compare(String(password), user.passwordHash);
+    const verifyDuration = Date.now() - tVerify;
+    console.log(`[AUTH] Password verification completed: ${verifyDuration}ms`);
+
     if (!isPasswordValid) {
       res.status(401).json({
         success: false,
@@ -163,6 +175,7 @@ export const login = async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
+    const tJwt = Date.now();
     const userPayload = {
       id: user.id,
       name: user.name,
@@ -173,6 +186,11 @@ export const login = async (req: Request, res: Response): Promise<void> => {
     };
 
     const token = generateAuthToken(userPayload);
+    const jwtDuration = Date.now() - tJwt;
+    console.log(`[AUTH] JWT generated: ${jwtDuration}ms`);
+
+    const totalDuration = Date.now() - reqStart;
+    console.log(`[AUTH] Login response sent: ${totalDuration}ms`);
 
     res.json({
       success: true,

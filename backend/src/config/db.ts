@@ -3,13 +3,23 @@ import mongoose from 'mongoose';
 let mongodServer: any = null;
 
 export const connectDB = async (): Promise<void> => {
+  // Reuse existing active connection
+  if (mongoose.connection.readyState === 1) {
+    return;
+  }
+
   const connStr = process.env.MONGODB_URI || process.env.MONGO_URI || 'mongodb://127.0.0.1:27017/invoiceflow';
   const isProduction = process.env.NODE_ENV === 'production';
 
   try {
     const maskedUri = connStr.replace(/:([^@]+)@/, ':****@');
     console.log(`Connecting to MongoDB at: ${maskedUri}`);
-    await mongoose.connect(connStr, { serverSelectionTimeoutMS: 10000 });
+    await mongoose.connect(connStr, {
+      serverSelectionTimeoutMS: 5000,
+      maxPoolSize: 10,
+      minPoolSize: 2,
+      socketTimeoutMS: 45000,
+    });
     console.log(`✅ MongoDB Connected to host: ${mongoose.connection.host}`);
   } catch (error: any) {
     console.error(`❌ MongoDB connection error: ${error?.message || error}`);
