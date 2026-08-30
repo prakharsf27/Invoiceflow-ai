@@ -740,6 +740,35 @@ export const UploadInvoicePage: React.FC = () => {
               <div className="space-y-4 text-xs">
                 {selectedDoc.extractionStatus === 'extracted' && selectedDoc.extractedData ? (
                   <>
+                    {/* Supplier Detection Banner */}
+                    {selectedDoc.supplierResult ? (
+                      <div className={`p-3 rounded-xl border flex items-start gap-3 ${
+                        selectedDoc.supplierResult.isNewSupplier
+                          ? 'bg-blue-50/70 border-blue-200 text-blue-900'
+                          : 'bg-emerald-50/70 border-emerald-200 text-emerald-900'
+                      }`}>
+                        <Building2 className={`w-4 h-4 shrink-0 mt-0.5 ${
+                          selectedDoc.supplierResult.isNewSupplier ? 'text-blue-600' : 'text-emerald-600'
+                        }`} />
+                        <div>
+                          <h5 className="font-bold text-xs">
+                            {selectedDoc.supplierResult.isNewSupplier ? 'New supplier detected' : 'Existing supplier matched'}
+                          </h5>
+                          <p className="font-semibold text-xs mt-0.5">{selectedDoc.supplierResult.supplierName}</p>
+                          <p className="text-[11px] mt-0.5 text-slate-600">{selectedDoc.supplierResult.message}</p>
+                        </div>
+                      </div>
+                    ) : selectedDoc.extractedData?.supplierName ? (
+                      <div className="p-3 rounded-xl border bg-slate-50 border-slate-200 text-slate-800 flex items-start gap-3">
+                        <Building2 className="w-4 h-4 text-slate-600 shrink-0 mt-0.5" />
+                        <div>
+                          <h5 className="font-bold text-xs">Supplier Profile</h5>
+                          <p className="font-semibold text-xs mt-0.5">{selectedDoc.extractedData.supplierName}</p>
+                          <p className="text-[11px] mt-0.5 text-slate-500">Associated with verified company vendor database.</p>
+                        </div>
+                      </div>
+                    ) : null}
+
                     <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
                       <div className="p-3 bg-slate-50 rounded-lg">
                         <span className="text-[11px] text-slate-400 font-medium block">Document Type</span>

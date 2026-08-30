@@ -53,6 +53,14 @@ export interface AppDocumentPOMatchResult {
   };
 }
 
+export interface AppDocumentSupplierMatchResult {
+  supplierId: string;
+  supplierName: string;
+  isNewSupplier: boolean;
+  matchedBy: 'gstin' | 'name' | 'auto_created';
+  message: string;
+}
+
 export interface AppDocument {
   id: string;
   companyId: string;
@@ -71,6 +79,7 @@ export interface AppDocument {
   extractedData?: any;
   validationResults?: AppDocumentValidationCheck[];
   matchResult?: AppDocumentPOMatchResult;
+  supplierResult?: AppDocumentSupplierMatchResult;
   extractedAt?: string;
   linkedRecordId?: string;
   createdAt: string;
@@ -165,6 +174,13 @@ export interface Supplier {
   gstin: string;
   email: string;
   phone: string;
+  address?: string;
+  city?: string;
+  state?: string;
+  pincode?: string;
+  paymentTerms?: string;
+  notes?: string;
+  category?: string;
   totalSpend: number;
   outstandingAmount: number;
   invoiceCount: number;
