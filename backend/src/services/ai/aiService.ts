@@ -48,7 +48,7 @@ class CentralizedAIService {
       return process.env.GEMINI_MODEL || DEFAULT_GEMINI_MODEL;
     }
     if (groqProvider.isConfigured()) {
-      return 'llama-3.3-70b-versatile';
+      return process.env.GROQ_TEXT_MODEL || 'openai/gpt-oss-120b';
     }
     return DEFAULT_GEMINI_MODEL;
   }

@@ -65,6 +65,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     initAuth();
   }, []);
 
+  // Listen for global session expiration events
+  useEffect(() => {
+    const handleUnauthorized = () => {
+      localStorage.removeItem('invoiceflow_token');
+      setToken(null);
+      setUser(null);
+    };
+
+    window.addEventListener('invoiceflow:unauthorized', handleUnauthorized);
+    return () => window.removeEventListener('invoiceflow:unauthorized', handleUnauthorized);
+  }, []);
+
   const login = async (email: string, password: string): Promise<AuthUser> => {
     const res = await fetchApi<{ success: boolean; token: string; user: AuthUser }>('/auth/login', {
       method: 'POST',

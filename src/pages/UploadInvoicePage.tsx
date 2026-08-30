@@ -940,7 +940,7 @@ export const UploadInvoicePage: React.FC = () => {
                   className="cursor-pointer gap-1.5"
                 >
                   <Sparkles className={`w-3.5 h-3.5 text-brand-600 ${isReprocessing ? 'animate-spin' : ''}`} />
-                  <span>{isReprocessing ? 'Extracting with Gemini...' : 'Reprocess with AI'}</span>
+                  <span>{isReprocessing ? 'Extracting with AI...' : 'Reprocess with AI'}</span>
                 </Button>
                 <a
                   href={documentService.getDocumentFileUrl(selectedDoc.id)}
