@@ -16,6 +16,9 @@ export interface ISupplierDocument extends Document {
   email: string;
   phone: string;
   address?: string;
+  city?: string;
+  state?: string;
+  pincode?: string;
   paymentTerms?: string;
   notes?: string;
   category?: string;
@@ -43,6 +46,9 @@ const SupplierSchema = new Schema<ISupplierDocument>(
     email: { type: String, default: '', trim: true, lowercase: true },
     phone: { type: String, default: '', trim: true },
     address: { type: String, default: '', trim: true },
+    city: { type: String, default: '', trim: true },
+    state: { type: String, default: '', trim: true },
+    pincode: { type: String, default: '', trim: true },
     paymentTerms: { type: String, default: 'Net 30', trim: true },
     notes: { type: String, default: '', trim: true },
     category: { type: String, default: 'General', trim: true },

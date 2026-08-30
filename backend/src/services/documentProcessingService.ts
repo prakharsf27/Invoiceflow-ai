@@ -109,6 +109,7 @@ class DocumentProcessingService {
       let extractedPayload: any = null;
       let validationResults: any[] = [];
       let matchResult: any = null;
+      let supplierResult: any = undefined;
       let linkedRecordId: string | undefined = undefined;
 
       // 5. Extract Structured Data via AI Extraction Service
@@ -219,6 +220,7 @@ class DocumentProcessingService {
         let supplierId = `sup-${(extractedPayload.supplierName || 'custom').toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 10)}`;
         let finalSupplierName = extractedPayload.supplierName || 'Supplier Pvt Ltd';
         let isBankChanged = false;
+        let supplierResult: any = undefined;
 
         try {
           const supplierGstin = (extractedPayload.supplierGstin || '').trim();
@@ -236,9 +238,16 @@ class DocumentProcessingService {
             ? await SupplierModel.findOne({ companyId, $or: searchConds })
             : null;
 
+          // Check if invoice already exists to ensure idempotency
+          const existingInvoice = await InvoiceModel.findOne({
+            companyId,
+            invoiceNumber: new RegExp(`^${escapeRegExp(invNum)}$`, 'i'),
+          });
+
           if (matchedSupplier) {
             supplierId = matchedSupplier.id;
             finalSupplierName = matchedSupplier.name;
+            const matchedByField = supplierGstin && matchedSupplier.gstin?.toLowerCase() === supplierGstin.toLowerCase() ? 'gstin' : 'name';
 
             // Detect if invoice bank account changed compared to existing trusted supplier record
             if (extractedPayload.bankDetails?.accountNumber && matchedSupplier.bankAccounts?.[0]?.accountNumber) {
@@ -249,18 +258,28 @@ class DocumentProcessingService {
               }
             }
 
-            // Update supplier aggregated stats safely
-            await SupplierModel.updateOne(
-              { id: matchedSupplier.id, companyId },
-              {
-                $inc: { invoiceCount: 1, totalSpend: invTotal || 0, outstandingAmount: invTotal || 0 },
-                $set: {
-                  lastInvoiceDate: extractedPayload.invoiceDate || new Date().toISOString().split('T')[0],
-                  totalPayable: (matchedSupplier.totalPayable || 0) + (invTotal || 0),
-                  bankStatus: isBankChanged ? 'changed' : matchedSupplier.bankStatus || 'verified',
-                },
-              }
-            );
+            // Update supplier aggregated stats safely only if it's a new invoice
+            if (!existingInvoice) {
+              await SupplierModel.updateOne(
+                { id: matchedSupplier.id, companyId },
+                {
+                  $inc: { invoiceCount: 1, totalSpend: invTotal || 0, outstandingAmount: invTotal || 0 },
+                  $set: {
+                    lastInvoiceDate: extractedPayload.invoiceDate || new Date().toISOString().split('T')[0],
+                    totalPayable: (matchedSupplier.totalPayable || 0) + (invTotal || 0),
+                    bankStatus: isBankChanged ? 'changed' : matchedSupplier.bankStatus || 'verified',
+                  },
+                }
+              );
+            }
+
+            supplierResult = {
+              supplierId: matchedSupplier.id,
+              supplierName: matchedSupplier.name,
+              isNewSupplier: false,
+              matchedBy: matchedByField,
+              message: `Existing supplier matched: ${matchedSupplier.name}. Invoice associated with existing supplier.`,
+            };
           } else if (rawSupplierName) {
             // Auto-create new Supplier record from extracted invoice info
             const generatedSupId = `sup-${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 7)}`;
@@ -296,6 +315,14 @@ class DocumentProcessingService {
             });
             supplierId = createdSup.id;
             console.log(`[DocumentProcessingService] Auto-registered new supplier "${rawSupplierName}" (${supplierId}) for company ${companyId}`);
+
+            supplierResult = {
+              supplierId: createdSup.id,
+              supplierName: createdSup.name,
+              isNewSupplier: true,
+              matchedBy: 'auto_created',
+              message: `New supplier detected: ${createdSup.name}. Supplier information was extracted from the invoice and added to your supplier database.`,
+            };
           }
         } catch (supErr) {
           console.warn(`[DocumentProcessingService] Non-blocking supplier auto-sync warning for ${documentId}:`, supErr);
@@ -372,6 +399,7 @@ class DocumentProcessingService {
             extractedData: extractedPayload,
             validationResults,
             matchResult,
+            supplierResult,
             linkedRecordId,
             processingStatus: 'processed',
             extractionStatus: 'extracted',

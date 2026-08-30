@@ -73,6 +73,9 @@ export const createSupplier = async (req: Request, res: Response): Promise<void>
       email,
       phone,
       address,
+      city,
+      state,
+      pincode,
       paymentTerms,
       notes,
       category,
@@ -159,6 +162,9 @@ export const createSupplier = async (req: Request, res: Response): Promise<void>
       email: cleanEmail,
       phone: cleanPhone,
       address: typeof address === 'string' ? address.trim() : '',
+      city: typeof city === 'string' ? city.trim() : '',
+      state: typeof state === 'string' ? state.trim() : '',
+      pincode: typeof pincode === 'string' ? pincode.trim() : '',
       paymentTerms: typeof paymentTerms === 'string' && paymentTerms.trim() ? paymentTerms.trim() : 'Net 30',
       notes: typeof notes === 'string' ? notes.trim() : '',
       category: typeof category === 'string' && category.trim() ? category.trim() : 'General',
@@ -219,6 +225,9 @@ export const updateSupplier = async (req: Request, res: Response): Promise<void>
       email,
       phone,
       address,
+      city,
+      state,
+      pincode,
       paymentTerms,
       notes,
       category,
@@ -276,6 +285,9 @@ export const updateSupplier = async (req: Request, res: Response): Promise<void>
 
     if (phone !== undefined) updates.phone = String(phone).trim();
     if (address !== undefined) updates.address = String(address).trim();
+    if (city !== undefined) updates.city = String(city).trim();
+    if (state !== undefined) updates.state = String(state).trim();
+    if (pincode !== undefined) updates.pincode = String(pincode).trim();
     if (paymentTerms !== undefined) updates.paymentTerms = String(paymentTerms).trim();
     if (notes !== undefined) updates.notes = String(notes).trim();
     if (category !== undefined) updates.category = String(category).trim();
