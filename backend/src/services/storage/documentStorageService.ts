@@ -6,8 +6,12 @@ class DocumentStorageService {
   private baseUploadDir: string;
 
   constructor() {
-    // Resolve base uploads folder inside backend project directory
-    this.baseUploadDir = path.resolve(process.cwd(), 'backend', 'uploads');
+    // Resolve base uploads folder reliably whether running from root or backend/
+    if (process.cwd().endsWith('backend')) {
+      this.baseUploadDir = path.resolve(process.cwd(), 'uploads');
+    } else {
+      this.baseUploadDir = path.resolve(process.cwd(), 'backend', 'uploads');
+    }
     if (!fs.existsSync(this.baseUploadDir)) {
       fs.mkdirSync(this.baseUploadDir, { recursive: true });
     }
