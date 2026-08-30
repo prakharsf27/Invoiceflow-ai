@@ -56,9 +56,10 @@ export const Topbar: React.FC<TopbarProps> = ({ onOpenMobileMenu }) => {
   const context = getPageContext();
 
   const formatRole = (role?: string) => {
+    if (role === 'owner' || role === 'finance_admin') return 'Workspace Owner';
     if (role === 'accountant') return 'Senior Accountant';
     if (role === 'reviewer') return 'Invoice Reviewer';
-    return 'Finance Administrator';
+    return 'Team Member';
   };
 
   const handleLogout = async () => {
