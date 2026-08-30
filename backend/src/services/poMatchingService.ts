@@ -52,8 +52,8 @@ class POMatchingService {
       }
     }
 
-    // 3. Priority 3: Match by Supplier GSTIN / Name if no direct PO number
-    if (!candidatePO && (supplierGstin || supplierName)) {
+    // 3. Priority 3: Match by Supplier GSTIN / Name if no direct PO number was referenced on invoice
+    if (!candidatePO && !poNumber && (supplierGstin || supplierName)) {
       const orConds: any[] = [];
       if (supplierGstin) orConds.push({ supplierGstin: new RegExp(`^${supplierGstin}$`, 'i') });
       if (supplierName) orConds.push({ supplierName: new RegExp(supplierName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i') });

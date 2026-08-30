@@ -1,5 +1,5 @@
 import { DocumentType } from '../../models/Document.js';
-import { pdfTextExtractionService } from './pdfTextExtractionService.js';
+import { documentTextExtractionService } from '../documentTextExtractionService.js';
 import { ocrService } from './ocrService.js';
 import { deterministicParserService } from './deterministicParserService.js';
 import {
@@ -36,7 +36,7 @@ class HybridExtractionService {
   ): Promise<HybridExtractionResult<ExtractedInvoiceData | ExtractedPOData>> {
     const { documentId, originalFileName, docTypeHint, companyId, userId } = options;
 
-    console.log(`[EXTRACTION] Document ${documentId} (${originalFileName}) → starting extraction pipeline...`);
+    console.log(`[DOC] Processing document: ${documentId} (${originalFileName})`);
 
     let extractedText = '';
     let sourceMethod: 'pdf_text' | 'ocr' = 'pdf_text';
@@ -46,29 +46,25 @@ class HybridExtractionService {
     // Step 1: Text Extraction (PDF Text -> OCR)
     // -------------------------------------------------------------
     if (mimeType === 'application/pdf' || originalFileName.toLowerCase().endsWith('.pdf')) {
-      console.log(`[EXTRACTION] Document ${documentId} → attempting local PDF text extraction...`);
-      const pdfRes = await pdfTextExtractionService.extractTextFromPDF(fileBuffer);
+      const pdfRes = await documentTextExtractionService.extractText(fileBuffer);
+      console.log(`[DOC] PDF text extraction: ${pdfRes.characterCount} chars (pages: ${pdfRes.pageCount || 1})`);
 
-      if (pdfRes.isUsable) {
+      if (pdfRes.success && !pdfRes.isScanned) {
         extractedText = pdfRes.text;
         isUsableText = true;
         sourceMethod = 'pdf_text';
-        console.log(`[EXTRACTION] Document ${documentId} → PDF text extraction successful (${pdfRes.characterCount} chars, ${pdfRes.pageCount} page(s)). 0 AI tokens used.`);
       } else {
-        console.log(`[EXTRACTION] Document ${documentId} → PDF contains minimal selectable text (${pdfRes.characterCount} chars). Routing to OCR/scanned layer...`);
+        console.log(`[DOC] Minimal or unreadable text detected. Document flagged as scanned/image.`);
       }
     }
 
     if (!isUsableText) {
-      console.log(`[EXTRACTION] Document ${documentId} → OCR required.`);
       const ocrRes = await ocrService.extractTextWithOCR(fileBuffer, mimeType);
       if (ocrRes.isUsable) {
         extractedText = ocrRes.text;
         isUsableText = true;
         sourceMethod = 'ocr';
-        console.log(`[EXTRACTION] Document ${documentId} → OCR text extraction successful via ${ocrRes.engine}.`);
-      } else {
-        console.log(`[EXTRACTION] Document ${documentId} → local text extraction unusable. Scanned image/complex document requires multimodal AI intelligence layer.`);
+        console.log(`[DOC] OCR text extraction: ${extractedText.length} chars (engine: ${ocrRes.engine})`);
       }
     }
 
@@ -81,10 +77,10 @@ class HybridExtractionService {
 
     if (detectedType === 'unknown' && isUsableText) {
       detectedType = deterministicParserService.detectDocumentTypeFromText(extractedText);
-      console.log(`[EXTRACTION] Document ${documentId} → detected document type from text: "${detectedType}"`);
+      console.log(`[DOC] Detected document type: ${detectedType}`);
     }
 
-    // Default to 'invoice' if still unknown to avoid unnecessary classification AI calls
+    // Default to 'invoice' if still unknown
     if (detectedType === 'unknown') {
       detectedType = 'invoice';
     }
@@ -97,7 +93,10 @@ class HybridExtractionService {
         const detResult = deterministicParserService.parsePOText(extractedText, sourceMethod);
 
         if (!detResult.needsAI) {
-          console.log(`[EXTRACTION] Document ${documentId} → deterministic PO extraction successful (method: ${sourceMethod}, confidence: ${detResult.confidence}). PO: ${detResult.data.poNumber}, Total: ${detResult.data.total}. Zero AI calls made.`);
+          console.log(`[DOC] Extraction strategy: LOCAL`);
+          console.log(`[DOC] Local extraction confidence: ${detResult.confidence}`);
+          console.log(`[DOC] Local PO extracted: PO# "${detResult.data.poNumber}", Supplier: "${detResult.data.supplierName}", Total: ${detResult.data.total}`);
+
           return {
             data: detResult.data,
             extractionMethod: sourceMethod,
@@ -107,13 +106,16 @@ class HybridExtractionService {
             model: 'deterministic_parser',
           };
         } else {
-          console.log(`[EXTRACTION] Document ${documentId} → deterministic PO extraction incomplete (missing or ambiguous: [${detResult.missingOrAmbiguousFields.join(', ')}]). Triggering AI fallback layer...`);
+          console.log(`[DOC] Local PO extraction incomplete (missing fields: ${detResult.missingOrAmbiguousFields.join(', ')}). Falling back to AI...`);
         }
       } else {
         const detResult = deterministicParserService.parseInvoiceText(extractedText, sourceMethod);
 
         if (!detResult.needsAI) {
-          console.log(`[EXTRACTION] Document ${documentId} → deterministic Invoice extraction successful (method: ${sourceMethod}, confidence: ${detResult.confidence}). Inv: ${detResult.data.invoiceNumber}, Amount: ${detResult.data.amount}, PO: ${detResult.data.poNumber || 'none'}. Zero AI calls made.`);
+          console.log(`[DOC] Extraction strategy: LOCAL`);
+          console.log(`[DOC] Local extraction confidence: ${detResult.confidence}`);
+          console.log(`[DOC] Local Invoice extracted: Inv# "${detResult.data.invoiceNumber}", Supplier: "${detResult.data.supplierName}", Amount: ${detResult.data.amount}`);
+
           return {
             data: detResult.data,
             extractionMethod: sourceMethod,
@@ -123,7 +125,7 @@ class HybridExtractionService {
             model: 'deterministic_parser',
           };
         } else {
-          console.log(`[EXTRACTION] Document ${documentId} → deterministic Invoice extraction incomplete (missing or ambiguous: [${detResult.missingOrAmbiguousFields.join(', ')}]). Triggering AI fallback layer...`);
+          console.log(`[DOC] Local Invoice extraction incomplete (missing fields: ${detResult.missingOrAmbiguousFields.join(', ')}). Falling back to AI...`);
         }
       }
     }
@@ -132,7 +134,7 @@ class HybridExtractionService {
     // Step 4: AI Fallback & Intelligent Merging
     // (Triggered ONLY when text was unusable or essential fields are missing)
     // -------------------------------------------------------------
-    console.log(`[EXTRACTION] Document ${documentId} → AI fallback required. Enqueuing for Gemini (Groq fallback)...`);
+    console.log(`[DOC] Extraction strategy: AI`);
 
     if (detectedType === 'purchase_order') {
       const aiRes = await aiExtractionService.extractPODocument(fileBuffer, mimeType, {
@@ -147,7 +149,7 @@ class HybridExtractionService {
         mergedData = this.mergePOData(detResult.data, aiRes.data);
       }
 
-      console.log(`[EXTRACTION] Document ${documentId} → extraction completed via AI (${aiRes.model}).`);
+      console.log(`[DOC] Extraction complete via AI (model: ${aiRes.model})`);
       return {
         data: mergedData,
         rawJson: aiRes.rawJson,
@@ -170,7 +172,7 @@ class HybridExtractionService {
         mergedData = this.mergeInvoiceData(detResult.data, aiRes.data);
       }
 
-      console.log(`[EXTRACTION] Document ${documentId} → extraction completed via AI (${aiRes.model}).`);
+      console.log(`[DOC] Extraction complete via AI (model: ${aiRes.model})`);
       return {
         data: mergedData,
         rawJson: aiRes.rawJson,
@@ -201,7 +203,6 @@ class HybridExtractionService {
       supplierPhone: det.supplierPhone || ai.supplierPhone,
       invoiceDate: det.invoiceDate || ai.invoiceDate,
       dueDate: det.dueDate || ai.dueDate,
-      // Prefer AI for PO number if deterministic failed to find one
       poNumber: det.poNumber || ai.poNumber,
       currency: det.currency || ai.currency || 'INR',
       subtotal: (det.subtotal && det.subtotal > 0) ? det.subtotal : ai.subtotal,

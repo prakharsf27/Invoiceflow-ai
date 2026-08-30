@@ -211,9 +211,9 @@ class DocumentProcessingService {
         validationResults = valRes.validationChecks;
 
         // Automatic PO Matching in TypeScript (0 AI calls)
-        console.log(`[DocumentProcessingService] Running PO matching for invoice document ${documentId}...`);
+        console.log(`[DOC] PO matching started for ${documentId}`);
         matchResult = await poMatchingService.matchInvoiceToPO(companyId, extractedPayload);
-        console.log(`[DocumentProcessingService] PO match status for ${documentId}: ${matchResult.matchStatus} (score: ${matchResult.matchScore}%)`);
+        console.log(`[DOC] PO matching result: ${matchResult.matchStatus} (score: ${matchResult.matchScore}%)`);
 
         const invNum = (extractedPayload.invoiceNumber || `INV-${Date.now()}`).trim();
         const invSubtotal = extractedPayload.subtotal || valRes.computedSubtotal;
