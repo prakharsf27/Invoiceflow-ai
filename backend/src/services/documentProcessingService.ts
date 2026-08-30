@@ -2,11 +2,16 @@ import crypto from 'crypto';
 import { DocumentModel, IDocumentEntity } from '../models/Document.js';
 import { InvoiceModel } from '../models/Invoice.js';
 import { PurchaseOrderModel } from '../models/PurchaseOrder.js';
+import { SupplierModel } from '../models/Supplier.js';
 import { documentStorageService } from './storage/documentStorageService.js';
 import { documentTypeService } from './documentTypeService.js';
 import { aiExtractionService } from './ai/aiExtractionService.js';
 import { documentValidationService } from './documentValidationService.js';
 import { poMatchingService } from './poMatchingService.js';
+
+const escapeRegExp = (str: string): string => {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+};
 
 class DocumentProcessingService {
   /**
@@ -118,6 +123,44 @@ class DocumentProcessingService {
         const valRes = documentValidationService.validateFinancialMath(extractedPayload);
         validationResults = valRes.validationChecks;
 
+        // Optional supplier association for PO
+        try {
+          const poSupName = (extractedPayload.supplierName || '').trim();
+          const poSupGstin = (extractedPayload.supplierGstin || '').trim();
+          if (poSupName) {
+            const existingSup = await SupplierModel.findOne({
+              companyId,
+              $or: [
+                { name: new RegExp(`^${escapeRegExp(poSupName)}$`, 'i') },
+                ...(poSupGstin ? [{ gstin: new RegExp(`^${escapeRegExp(poSupGstin)}$`, 'i') }] : []),
+              ],
+            });
+
+            if (!existingSup) {
+              await SupplierModel.create({
+                id: `sup-${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 7)}`,
+                companyId,
+                name: poSupName,
+                gstin: poSupGstin,
+                email: extractedPayload.supplierEmail || '',
+                phone: '',
+                totalSpend: 0,
+                outstandingAmount: 0,
+                invoiceCount: 0,
+                riskLevel: 'low',
+                lastInvoiceDate: 'N/A',
+                status: 'active',
+                bankAccounts: [],
+                bankStatus: 'verified',
+                totalPayable: 0,
+                riskStatus: 'low',
+              });
+            }
+          }
+        } catch (supErr) {
+          console.warn('[DocumentProcessingService] PO Supplier auto-sync warning (non-blocking):', supErr);
+        }
+
         // Sync or Create PurchaseOrder record in MongoDB scoped to companyId
         const poNum = (extractedPayload.poNumber || `PO-${Date.now()}`).trim();
         const createdPO = await PurchaseOrderModel.findOneAndUpdate(
@@ -161,7 +204,6 @@ class DocumentProcessingService {
         // Automatic PO Matching in TypeScript (0 AI calls)
         matchResult = await poMatchingService.matchInvoiceToPO(companyId, extractedPayload);
 
-        // Sync or Create Invoice record in MongoDB scoped to companyId
         const invNum = (extractedPayload.invoiceNumber || `INV-${Date.now()}`).trim();
         const invSubtotal = extractedPayload.subtotal || valRes.computedSubtotal;
         const invTax = extractedPayload.tax || valRes.computedTax;
@@ -173,6 +215,93 @@ class DocumentProcessingService {
         let status = isPOMatched && isMathValid ? 'ready' : (matchResult.matchStatus === 'mismatch' ? 'critical' : 'review');
         let aiStatus = isPOMatched && isMathValid ? 'Ready' : (matchResult.matchStatus === 'mismatch' ? 'PO Mismatch' : (!isMathValid ? 'Math Discrepancy' : 'Needs Review'));
 
+        // 5a. Supplier Automation: Associate with existing supplier or auto-create within tenant
+        let supplierId = `sup-${(extractedPayload.supplierName || 'custom').toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 10)}`;
+        let finalSupplierName = extractedPayload.supplierName || 'Supplier Pvt Ltd';
+        let isBankChanged = false;
+
+        try {
+          const supplierGstin = (extractedPayload.supplierGstin || '').trim();
+          const rawSupplierName = (extractedPayload.supplierName || '').trim();
+
+          const searchConds: any[] = [];
+          if (supplierGstin) {
+            searchConds.push({ gstin: new RegExp(`^${escapeRegExp(supplierGstin)}$`, 'i') });
+          }
+          if (rawSupplierName) {
+            searchConds.push({ name: new RegExp(`^${escapeRegExp(rawSupplierName)}$`, 'i') });
+          }
+
+          let matchedSupplier = searchConds.length > 0
+            ? await SupplierModel.findOne({ companyId, $or: searchConds })
+            : null;
+
+          if (matchedSupplier) {
+            supplierId = matchedSupplier.id;
+            finalSupplierName = matchedSupplier.name;
+
+            // Detect if invoice bank account changed compared to existing trusted supplier record
+            if (extractedPayload.bankDetails?.accountNumber && matchedSupplier.bankAccounts?.[0]?.accountNumber) {
+              const existingAcc = matchedSupplier.bankAccounts[0].accountNumber.replace(/[^0-9a-zA-Z]/g, '');
+              const newAcc = extractedPayload.bankDetails.accountNumber.replace(/[^0-9a-zA-Z]/g, '');
+              if (existingAcc && newAcc && existingAcc !== newAcc) {
+                isBankChanged = true;
+              }
+            }
+
+            // Update supplier aggregated stats safely
+            await SupplierModel.updateOne(
+              { id: matchedSupplier.id, companyId },
+              {
+                $inc: { invoiceCount: 1, totalSpend: invTotal || 0, outstandingAmount: invTotal || 0 },
+                $set: {
+                  lastInvoiceDate: extractedPayload.invoiceDate || new Date().toISOString().split('T')[0],
+                  totalPayable: (matchedSupplier.totalPayable || 0) + (invTotal || 0),
+                  bankStatus: isBankChanged ? 'changed' : matchedSupplier.bankStatus || 'verified',
+                },
+              }
+            );
+          } else if (rawSupplierName) {
+            // Auto-create new Supplier record from extracted invoice info
+            const generatedSupId = `sup-${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 7)}`;
+            const newBankAccounts = extractedPayload.bankDetails?.accountNumber
+              ? [
+                  {
+                    accountNumber: extractedPayload.bankDetails.accountNumber,
+                    bankName: extractedPayload.bankDetails.bankName || 'Bank',
+                    ifsc: (extractedPayload.bankDetails.ifsc || 'N/A').toUpperCase(),
+                    isPrimary: true,
+                    addedDate: new Date().toISOString().split('T')[0],
+                  },
+                ]
+              : [];
+
+            const createdSup = await SupplierModel.create({
+              id: generatedSupId,
+              companyId,
+              name: rawSupplierName,
+              gstin: supplierGstin,
+              email: extractedPayload.supplierEmail || '',
+              phone: extractedPayload.supplierPhone || '',
+              totalSpend: invTotal || 0,
+              outstandingAmount: invTotal || 0,
+              invoiceCount: 1,
+              riskLevel: 'low',
+              lastInvoiceDate: extractedPayload.invoiceDate || new Date().toISOString().split('T')[0],
+              status: 'active',
+              bankAccounts: newBankAccounts,
+              bankStatus: 'verified',
+              totalPayable: invTotal || 0,
+              riskStatus: 'low',
+            });
+            supplierId = createdSup.id;
+            console.log(`[DocumentProcessingService] Auto-registered new supplier "${rawSupplierName}" (${supplierId}) for company ${companyId}`);
+          }
+        } catch (supErr) {
+          console.warn(`[DocumentProcessingService] Non-blocking supplier auto-sync warning for ${documentId}:`, supErr);
+        }
+
+        // Sync or Create Invoice record in MongoDB scoped to companyId
         const createdInvoice = await InvoiceModel.findOneAndUpdate(
           { companyId, invoiceNumber: new RegExp(`^${invNum.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') },
           {
@@ -181,8 +310,8 @@ class DocumentProcessingService {
               invoiceNumber: invNum,
               companyId,
               createdBy: userId,
-              supplierId: `sup-${(extractedPayload.supplierName || 'custom').toLowerCase().replace(/[^a-z0-9]/g, '')}`,
-              supplierName: extractedPayload.supplierName || 'Supplier Pvt Ltd',
+              supplierId,
+              supplierName: finalSupplierName,
               supplierGstin: extractedPayload.supplierGstin || '29AABCS1234F1Z1',
               supplierEmail: extractedPayload.supplierEmail || 'billing@supplier.com',
               supplierPhone: extractedPayload.supplierPhone || '+91 99000 00000',
@@ -194,16 +323,16 @@ class DocumentProcessingService {
               invoiceDate: extractedPayload.invoiceDate || new Date().toISOString().split('T')[0],
               dueDate: extractedPayload.dueDate || new Date(Date.now() + 15 * 86400000).toISOString().split('T')[0],
               poNumber: extractedPayload.poNumber || matchResult.poNumber,
-              aiStatus,
-              status,
-              paymentStatus: status === 'ready' ? 'scheduled' : 'pending',
-              riskLevel: status === 'ready' ? 'low' : 'medium',
+              aiStatus: isBankChanged ? 'Bank Detail Change' : aiStatus,
+              status: isBankChanged ? 'critical' : status,
+              paymentStatus: isBankChanged ? 'on_hold' : (status === 'ready' ? 'scheduled' : 'pending'),
+              riskLevel: isBankChanged ? 'high' : (status === 'ready' ? 'low' : 'medium'),
               paymentTerms: extractedPayload.paymentTerms || 'Net 15 Days',
               bankDetails: extractedPayload.bankDetails?.accountNumber ? {
                 accountNumber: extractedPayload.bankDetails.accountNumber,
                 ifsc: extractedPayload.bankDetails.ifsc || 'N/A',
                 bankName: extractedPayload.bankDetails.bankName || 'Bank',
-                isChangedFromPrevious: false,
+                isChangedFromPrevious: isBankChanged,
               } : {
                 accountNumber: '990011223344',
                 ifsc: 'HDFC0001234',
@@ -221,9 +350,11 @@ class DocumentProcessingService {
                 poItemMatched: true,
               })),
               aiChecks: validationResults,
-              aiRecommendation: isPOMatched && isMathValid
-                ? 'Document extracted and 100% matched with PO. Safe for autonomous approval.'
-                : 'Inspect validation checks and PO variances prior to disbursement.',
+              aiRecommendation: isBankChanged
+                ? 'CRITICAL ALERT: Bank account details differ from verified supplier record. Verify bank mandate before disbursement.'
+                : (isPOMatched && isMathValid
+                  ? 'Document extracted and 100% matched with PO. Safe for autonomous approval.'
+                  : 'Inspect validation checks and PO variances prior to disbursement.'),
             },
           },
           { upsert: true, returnDocument: 'after' }

@@ -29,8 +29,8 @@ export const LoginPage: React.FC = () => {
 
     try {
       await login(email, password);
-      await refreshData();
       navigate(from, { replace: true });
+      refreshData().catch(() => {});
     } catch (err: any) {
       console.error('Login error:', err);
       setErrorMsg(err?.message || 'Invalid email or password. Please try again.');
@@ -47,8 +47,8 @@ export const LoginPage: React.FC = () => {
 
     try {
       await login('demo@invoiceflow.ai', 'password123');
-      await refreshData();
       navigate(from, { replace: true });
+      refreshData().catch(() => {});
     } catch (err: any) {
       console.error('Demo login error:', err);
       setErrorMsg(err?.message || 'Failed to sign in with demo account.');

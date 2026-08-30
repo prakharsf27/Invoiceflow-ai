@@ -2,7 +2,7 @@ import { Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { UserModel, UserRole } from '../models/User.js';
-import { JWT_SECRET } from '../middleware/auth.js';
+import { getJwtSecret } from '../middleware/auth.js';
 
 /**
  * Helper to generate JWT token with multi-tenant company context.
@@ -25,7 +25,7 @@ const generateAuthToken = (user: {
       companyId: user.companyId,
       companyName: user.companyName,
     },
-    JWT_SECRET,
+    getJwtSecret(),
     { expiresIn: '7d' }
   );
 };
