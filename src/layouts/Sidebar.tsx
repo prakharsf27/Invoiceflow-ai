@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { useApp } from '../context/AppContext';
+import { useAuth } from '../context/AuthContext';
 
 interface SidebarProps {
   isOpen?: boolean;
@@ -36,6 +37,7 @@ interface NavGroup {
 
 export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
   const { invoices, needAttentionCount } = useApp();
+  const { user, isOwner } = useAuth();
 
   const navGroups: NavGroup[] = [
     {
@@ -104,6 +106,19 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
               <X className="w-5 h-5" />
             </button>
           )}
+        </div>
+
+        {/* Workspace Context Pill */}
+        <div className="px-4 py-2 bg-slate-50 border-b border-slate-100 flex items-center justify-between gap-2">
+          <div className="flex items-center gap-1.5 min-w-0">
+            <span className="text-xs">🏢</span>
+            <span className="text-xs font-semibold text-slate-800 truncate" title={user?.companyName}>
+              {user?.companyName || 'Workspace'}
+            </span>
+          </div>
+          <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-slate-200/80 text-slate-700 uppercase tracking-wider shrink-0">
+            {isOwner ? 'Owner' : 'Member'}
+          </span>
         </div>
 
         {/* Navigation list */}

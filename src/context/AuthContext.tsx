@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { fetchApi } from '../services/api';
 
-export type UserRole = 'finance_admin' | 'accountant' | 'reviewer';
+export type UserRole = 'owner' | 'member' | 'finance_admin' | 'accountant' | 'reviewer';
 
 export interface AuthUser {
   id: string;
@@ -16,6 +16,7 @@ interface AuthContextType {
   user: AuthUser | null;
   token: string | null;
   isAuthenticated: boolean;
+  isOwner: boolean;
   isLoading: boolean;
   login: (email: string, password: string) => Promise<AuthUser>;
   register: (
@@ -23,8 +24,10 @@ interface AuthContextType {
     email: string,
     password: string,
     companyName?: string,
-    role?: UserRole
+    role?: UserRole,
+    invitationToken?: string
   ) => Promise<AuthUser>;
+  updateUserCompany: (companyName: string) => void;
   logout: () => Promise<void>;
 }
 
@@ -98,11 +101,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     email: string,
     password: string,
     companyName?: string,
-    role: UserRole = 'finance_admin'
+    role: UserRole = 'owner',
+    invitationToken?: string
   ): Promise<AuthUser> => {
     const res = await fetchApi<{ success: boolean; token: string; user: AuthUser }>('/auth/register', {
       method: 'POST',
-      body: JSON.stringify({ name, email, password, companyName, role }),
+      body: JSON.stringify({ name, email, password, companyName, role, invitationToken }),
     });
 
     if (!res || !res.token || !res.user) {
@@ -115,6 +119,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return res.user;
   };
 
+  const updateUserCompany = (companyName: string) => {
+    if (user) {
+      setUser({ ...user, companyName });
+    }
+  };
+
   const logout = async (): Promise<void> => {
     try {
       await fetchApi('/auth/logout', { method: 'POST' }).catch(() => {});
@@ -125,15 +135,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
+  const isOwner = Boolean(user?.role === 'owner' || user?.role === 'finance_admin');
+
   return (
     <AuthContext.Provider
       value={{
         user,
         token,
         isAuthenticated: Boolean(token && user),
+        isOwner,
         isLoading,
         login,
         register,
+        updateUserCompany,
         logout,
       }}
     >

@@ -17,6 +17,7 @@ import copilotRoutes from "./routes/copilotRoutes.js";
 import dashboardRoutes from "./routes/dashboardRoutes.js";
 import aiRoutes from "./routes/aiRoutes.js";
 import documentRoutes from "./routes/documentRoutes.js";
+import companyRoutes from "./routes/companyRoutes.js";
 
 import { requireAuth } from "./middleware/auth.js";
 
@@ -31,6 +32,7 @@ app.use(express.json());
 
 // Public Auth & Health Routes
 app.use("/api/auth", authRoutes);
+app.use("/api/company", companyRoutes);
 app.get("/api/health", (_req, res) => {
   res.status(200).json({
     success: true,

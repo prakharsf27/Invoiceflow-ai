@@ -293,3 +293,46 @@ export interface CopilotMessage {
     }>;
   };
 }
+
+export interface TeamMember {
+  id: string;
+  name: string;
+  email: string;
+  role: 'owner' | 'member' | 'finance_admin' | 'accountant' | 'reviewer';
+  isOwner: boolean;
+  isCurrentUser: boolean;
+  createdAt: string;
+}
+
+export interface TeamInvitation {
+  id: string;
+  email: string;
+  role: 'owner' | 'member' | 'finance_admin' | 'accountant' | 'reviewer';
+  invitedByName: string;
+  token: string;
+  createdAt: string;
+  expiresAt: string;
+}
+
+export interface CompanyProfile {
+  id: string;
+  name: string;
+  ownerId: string;
+  gstin?: string;
+  email?: string;
+  phone?: string;
+  address?: string;
+  city?: string;
+  state?: string;
+  pincode?: string;
+  settings: {
+    autoClearanceThreshold: number;
+    riskTolerance: 'low' | 'medium' | 'high';
+    requirePoMatch: boolean;
+    currency?: string;
+    defaultPaymentTerms?: string;
+  };
+  membersCount: number;
+  isOwner: boolean;
+  createdAt?: string;
+}
