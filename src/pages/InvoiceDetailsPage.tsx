@@ -204,11 +204,11 @@ export const InvoiceDetailsPage: React.FC = () => {
       </Card>
 
       {/* AI Risk Analysis Dedicated Card */}
-      <Card className="p-6 bg-gradient-to-br from-white via-slate-50/50 to-purple-50/20 border-brand-200/90 shadow-sm space-y-5">
+      <Card className="p-6 bg-white border-slate-200/90 shadow-xs space-y-5">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-4">
           <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-lg bg-brand-50 text-brand-700 flex items-center justify-center">
-              <Sparkles className="w-4 h-4" />
+            <div className="w-8 h-8 rounded-lg bg-slate-900 text-white flex items-center justify-center">
+              <Sparkles className="w-4 h-4 text-amber-400" />
             </div>
             <div>
               <div className="flex items-center gap-2">
