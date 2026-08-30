@@ -10,53 +10,75 @@ export interface IBankAccount {
 
 export interface ISupplierDocument extends Document {
   id: string;
+  companyId: string;
   name: string;
   gstin: string;
   email: string;
   phone: string;
+  address?: string;
+  paymentTerms?: string;
+  notes?: string;
+  category?: string;
   totalSpend: number;
   outstandingAmount: number;
   invoiceCount: number;
-  riskLevel: string;
+  riskLevel: 'low' | 'medium' | 'high';
   lastInvoiceDate: string;
-  status: string;
+  status: 'active' | 'under_review' | 'blocked';
   bankAccounts: IBankAccount[];
   recentAlerts?: string[];
-  bankStatus?: string;
+  bankStatus?: 'verified' | 'changed';
   totalPayable?: number;
-  riskStatus?: string;
-  companyId: string;
+  riskStatus?: 'low' | 'medium' | 'high';
+  createdAt?: Date;
+  updatedAt?: Date;
 }
 
 const SupplierSchema = new Schema<ISupplierDocument>(
   {
-    id: { type: String, required: true, unique: true },
-    companyId: { type: String, required: true, default: 'company-demo-01', index: true },
-    name: { type: String, required: true, index: true },
-    gstin: { type: String, required: true },
-    email: { type: String, required: true },
-    phone: { type: String, required: true },
-    totalSpend: { type: Number, required: true },
-    outstandingAmount: { type: Number, required: true },
-    invoiceCount: { type: Number, required: true },
-    riskLevel: { type: String, required: true },
-    lastInvoiceDate: { type: String, required: true },
-    status: { type: String, required: true },
+    id: { type: String, required: true, unique: true, index: true },
+    companyId: { type: String, required: true, index: true },
+    name: { type: String, required: true, trim: true, index: true },
+    gstin: { type: String, default: '', trim: true },
+    email: { type: String, default: '', trim: true, lowercase: true },
+    phone: { type: String, default: '', trim: true },
+    address: { type: String, default: '', trim: true },
+    paymentTerms: { type: String, default: 'Net 30', trim: true },
+    notes: { type: String, default: '', trim: true },
+    category: { type: String, default: 'General', trim: true },
+    totalSpend: { type: Number, default: 0 },
+    outstandingAmount: { type: Number, default: 0 },
+    invoiceCount: { type: Number, default: 0 },
+    riskLevel: {
+      type: String,
+      enum: ['low', 'medium', 'high'],
+      default: 'low',
+    },
+    lastInvoiceDate: { type: String, default: 'N/A' },
+    status: {
+      type: String,
+      enum: ['active', 'under_review', 'blocked'],
+      default: 'active',
+    },
     bankAccounts: [
       {
-        accountNumber: { type: String, required: true },
-        bankName: { type: String, required: true },
-        ifsc: { type: String, required: true },
-        isPrimary: { type: Boolean, required: true },
-        addedDate: { type: String, required: true },
+        accountNumber: { type: String, default: '' },
+        bankName: { type: String, default: '' },
+        ifsc: { type: String, default: '' },
+        isPrimary: { type: Boolean, default: true },
+        addedDate: { type: String, default: () => new Date().toISOString().split('T')[0] },
       },
     ],
     recentAlerts: [{ type: String }],
-    bankStatus: { type: String },
-    totalPayable: { type: Number },
-    riskStatus: { type: String },
+    bankStatus: { type: String, enum: ['verified', 'changed'], default: 'verified' },
+    totalPayable: { type: Number, default: 0 },
+    riskStatus: { type: String, enum: ['low', 'medium', 'high'], default: 'low' },
   },
   { timestamps: true, strict: false }
 );
+
+// Compound index for fast tenant-isolated duplicate checks
+SupplierSchema.index({ companyId: 1, name: 1 });
+SupplierSchema.index({ companyId: 1, gstin: 1 });
 
 export const SupplierModel = mongoose.model<ISupplierDocument>('Supplier', SupplierSchema, 'suppliers');

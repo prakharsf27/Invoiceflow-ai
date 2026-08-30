@@ -41,6 +41,9 @@ interface AppContextType {
   approveInvoice: (id: string) => Promise<void>;
   holdInvoice: (id: string) => Promise<void>;
   addInvoice: (invoiceData: Partial<Invoice>) => Promise<Invoice>;
+  createSupplier: (supplierData: Partial<Supplier>) => Promise<Supplier>;
+  updateSupplier: (id: string, supplierData: Partial<Supplier>) => Promise<Supplier>;
+  deleteSupplier: (id: string) => Promise<void>;
   resolveException: (exceptionId: string, invoiceId?: string) => Promise<void>;
   updatePaymentStatus: (paymentId: string, status: string) => Promise<void>;
   markNotificationRead: (id: string) => void;
@@ -84,15 +87,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const [toast, setToast] = useState<ToastMessage | null>(null);
 
-  // Initial Data Fetching from MongoDB REST APIs
+  // Initial Data Fetching from MongoDB REST APIs (parallelized and non-blocking)
   const fetchAllBackendData = useCallback(async () => {
+    const token = localStorage.getItem('invoiceflow_token');
+    if (!token) {
+      setIsLoading(false);
+      return;
+    }
+
     setIsLoading(true);
     try {
       const [fetchedInvoices, fetchedSuppliers, fetchedPOs, fetchedPayments] = await Promise.all([
-        invoiceService.getInvoices(),
-        supplierService.getSuppliers(),
-        poService.getPurchaseOrders(),
-        paymentService.getPayments(),
+        invoiceService.getInvoices().catch(() => []),
+        supplierService.getSuppliers().catch(() => []),
+        poService.getPurchaseOrders().catch(() => []),
+        paymentService.getPayments().catch(() => []),
       ]);
 
       setInvoices(fetchedInvoices || []);
@@ -101,10 +110,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setPaymentRecords(fetchedPayments || []);
     } catch (err) {
       console.error('Failed to load data from backend MongoDB:', err);
-      setInvoices([]);
-      setSuppliersData([]);
-      setPoData([]);
-      setPaymentRecords([]);
     } finally {
       setIsLoading(false);
     }
@@ -159,7 +164,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // Derived Suppliers connected to invoices
   const suppliers: Supplier[] = useMemo(() => {
     return suppliersData.map((sup) => {
-      const supInvoices = invoices.filter((i) => i.supplierId === sup.id || i.supplierName === sup.name);
+      const supInvoices = invoices.filter((i) => i.supplierId === sup.id || i.supplierName?.toLowerCase() === sup.name?.toLowerCase());
       const totalPayable = supInvoices
         .filter((i) => i.paymentStatus !== 'paid')
         .reduce((sum, i) => sum + i.amount, 0);
@@ -170,9 +175,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return {
         ...sup,
         invoiceCount: supInvoices.length > 0 ? supInvoices.length : sup.invoiceCount || 0,
-        totalPayable: totalPayable > 0 ? totalPayable : sup.totalSpend || 0,
-        bankStatus: hasBankChange ? 'changed' : 'verified',
-        riskStatus: hasCritical ? 'high' : sup.riskLevel || 'low',
+        totalPayable: totalPayable > 0 ? totalPayable : (sup.totalPayable || sup.totalSpend || 0),
+        bankStatus: hasBankChange ? 'changed' : (sup.bankStatus || 'verified'),
+        riskStatus: hasCritical ? 'high' : (sup.riskStatus || sup.riskLevel || 'low'),
       };
     });
   }, [invoices, suppliersData]);
@@ -329,6 +334,27 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return newInvoice;
   };
 
+  // Supplier Management Handlers
+  const createSupplier = async (supplierData: Partial<Supplier>): Promise<Supplier> => {
+    const created = await supplierService.createSupplier(supplierData);
+    setSuppliersData((prev) => [created, ...prev]);
+    showToast(`Supplier "${created.name}" created successfully!`, 'success');
+    return created;
+  };
+
+  const updateSupplier = async (id: string, supplierData: Partial<Supplier>): Promise<Supplier> => {
+    const updated = await supplierService.updateSupplier(id, supplierData);
+    setSuppliersData((prev) => prev.map((s) => (s.id === id ? updated : s)));
+    showToast(`Supplier "${updated.name}" updated successfully!`, 'success');
+    return updated;
+  };
+
+  const deleteSupplier = async (id: string): Promise<void> => {
+    const res = await supplierService.deleteSupplier(id);
+    setSuppliersData((prev) => prev.filter((s) => s.id !== id));
+    showToast(`Supplier "${res.name || 'Vendor'}" deleted successfully.`, 'info');
+  };
+
   const markNotificationRead = (id: string) => {
     setNotifications((prev) =>
       prev.map((n) => (n.id === id ? { ...n, read: true } : n))
@@ -388,6 +414,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         approveInvoice,
         holdInvoice,
         addInvoice,
+        createSupplier,
+        updateSupplier,
+        deleteSupplier,
         resolveException,
         updatePaymentStatus,
         markNotificationRead,

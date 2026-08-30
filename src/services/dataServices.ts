@@ -18,6 +18,23 @@ export const supplierService = {
       return null;
     }
   },
+  createSupplier: async (data: Partial<Supplier>): Promise<Supplier> => {
+    return await fetchApi<Supplier>('/suppliers', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+  updateSupplier: async (id: string, data: Partial<Supplier>): Promise<Supplier> => {
+    return await fetchApi<Supplier>(`/suppliers/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  },
+  deleteSupplier: async (id: string): Promise<{ id: string; name: string }> => {
+    return await fetchApi<{ id: string; name: string }>(`/suppliers/${id}`, {
+      method: 'DELETE',
+    });
+  },
 };
 
 export const exceptionService = {

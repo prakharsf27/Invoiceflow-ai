@@ -34,8 +34,8 @@ export const RegisterPage: React.FC = () => {
 
     try {
       await register(name, email, password, companyName || `${name}'s Org`, role);
-      await refreshData();
       navigate('/app/dashboard', { replace: true });
+      refreshData().catch(() => {});
     } catch (err: any) {
       console.error('Registration error:', err);
       setErrorMsg(err?.message || 'Failed to create account. Please try again.');
