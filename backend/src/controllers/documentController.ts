@@ -6,6 +6,7 @@ import { DocumentModel } from '../models/Document.js';
 import { documentStorageService } from '../services/storage/documentStorageService.js';
 import { documentTypeService } from '../services/documentTypeService.js';
 import { documentProcessingService } from '../services/documentProcessingService.js';
+import { poMatchingService } from '../services/poMatchingService.js';
 
 const ALLOWED_MIME_TYPES = new Set([
   'application/pdf',
@@ -399,6 +400,64 @@ export const deleteDocumentController = async (req: Request, res: Response): Pro
     res.status(500).json({
       success: false,
       error: error?.message || 'Failed to delete document.',
+    });
+  }
+};
+
+/**
+ * POST /api/documents/:id/rematch
+ * Re-run PO matching for a single invoice document without re-extraction.
+ * Useful when the PO was uploaded after the invoice was already extracted.
+ */
+export const rematchDocumentController = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const companyId = req.user!.companyId;
+    const { id } = req.params;
+
+    const document = await DocumentModel.findOne({ id, companyId });
+
+    if (!document) {
+      res.status(404).json({
+        success: false,
+        error: 'Document not found or access denied.',
+      });
+      return;
+    }
+
+    if (document.documentType !== 'invoice') {
+      res.status(400).json({
+        success: false,
+        error: 'PO matching is only applicable to invoice documents.',
+      });
+      return;
+    }
+
+    if (!document.extractedData) {
+      res.status(400).json({
+        success: false,
+        error: 'Document has not been extracted yet. Process the document first.',
+      });
+      return;
+    }
+
+    const newMatchResult = await poMatchingService.matchInvoiceToPO(companyId, document.extractedData);
+
+    const updatedDocument = await DocumentModel.findOneAndUpdate(
+      { id, companyId },
+      { $set: { matchResult: newMatchResult } },
+      { returnDocument: 'after' }
+    );
+
+    res.json({
+      success: true,
+      documentId: id,
+      matchResult: newMatchResult,
+      document: updatedDocument,
+    });
+  } catch (error: any) {
+    res.status(500).json({
+      success: false,
+      error: error?.message || 'Failed to re-match document.',
     });
   }
 };

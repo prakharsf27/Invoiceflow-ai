@@ -11,6 +11,7 @@ import {
   reprocessDocumentController,
   getDocumentExtractionController,
   getDocumentMatchesController,
+  rematchDocumentController,
 } from '../controllers/documentController.js';
 
 const router = Router();
@@ -50,6 +51,9 @@ router.get('/:id/extraction', getDocumentExtractionController);
 
 // GET /api/documents/:id/matches (Get PO match result - 0 AI calls)
 router.get('/:id/matches', getDocumentMatchesController);
+
+// POST /api/documents/:id/rematch (Re-run PO matching without re-extraction)
+router.post('/:id/rematch', rematchDocumentController);
 
 // DELETE /api/documents/:id (Delete document & file)
 router.delete('/:id', deleteDocumentController);

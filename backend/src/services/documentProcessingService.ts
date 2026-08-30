@@ -46,6 +46,29 @@ class DocumentProcessingService {
     // 3. Idempotency & Cache Check
     if (!forceReprocess) {
       if (doc.extractionStatus === 'extracted' && doc.extractedData) {
+        // For already-extracted INVOICE documents, re-run PO matching if the result is absent or no_match.
+        // This handles the case where the invoice was extracted before the PO was uploaded.
+        if (doc.documentType === 'invoice') {
+          const currentMatchStatus = doc.matchResult?.matchStatus;
+          const hasUnresolvedPORef = (doc.extractedData?.poNumber || '').trim() !== '';
+          if (hasUnresolvedPORef && (!currentMatchStatus || currentMatchStatus === 'no_match')) {
+            console.log(`[DocumentProcessingService] Invoice ${documentId} already extracted but PO match is "${currentMatchStatus || 'none'}". Re-running PO matching...`);
+            try {
+              const freshMatch = await poMatchingService.matchInvoiceToPO(companyId, doc.extractedData);
+              if (freshMatch.matchStatus !== currentMatchStatus) {
+                const updatedDoc = await DocumentModel.findOneAndUpdate(
+                  { id: documentId, companyId },
+                  { $set: { matchResult: freshMatch } },
+                  { returnDocument: 'after' }
+                );
+                console.log(`[DocumentProcessingService] PO match updated for ${documentId}: ${currentMatchStatus} → ${freshMatch.matchStatus}`);
+                return updatedDoc || doc;
+              }
+            } catch (rematchErr: any) {
+              console.warn(`[DocumentProcessingService] PO re-match warning for ${documentId}:`, rematchErr?.message);
+            }
+          }
+        }
         console.log(`[DocumentProcessingService] Idempotency hit: Document ${documentId} already extracted.`);
         return doc;
       }
@@ -198,7 +221,15 @@ class DocumentProcessingService {
           { upsert: true, returnDocument: 'after' }
         );
 
-        linkedRecordId = createdPO.id || createdPO._id?.toString();
+        linkedRecordId = createdPO?.id || createdPO?._id?.toString();
+
+        // After PO is successfully stored, re-match all company invoices that reference this PO number
+        const processedPONum = (extractedPayload.poNumber || '').trim();
+        if (processedPONum) {
+          // Non-blocking: fire and forget, errors are logged internally
+          poMatchingService.rematchInvoicesForPO(companyId, processedPONum)
+            .catch((err: any) => console.warn('[DocumentProcessingService] rematchInvoicesForPO error (non-blocking):', err?.message));
+        }
       } else {
         // Default to Invoice extraction
         docType = 'invoice';
@@ -213,7 +244,12 @@ class DocumentProcessingService {
         validationResults = valRes.validationChecks;
 
         // Automatic PO Matching in TypeScript (0 AI calls)
+        console.log(`[DocumentProcessingService] Running PO matching for invoice document ${documentId}...`);
         matchResult = await poMatchingService.matchInvoiceToPO(companyId, extractedPayload);
+        console.log(`[DocumentProcessingService] PO matching result for ${documentId}: ${matchResult.matchStatus} (score=${matchResult.matchScore}, PO="${matchResult.poNumber || 'none'}")`);
+        if (matchResult.discrepancies?.length > 0) {
+          console.log(`[DocumentProcessingService] PO match discrepancies for ${documentId}:`, matchResult.discrepancies);
+        }
 
         const invNum = (extractedPayload.invoiceNumber || `INV-${Date.now()}`).trim();
         const invSubtotal = extractedPayload.subtotal || valRes.computedSubtotal;
