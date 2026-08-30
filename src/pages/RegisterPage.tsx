@@ -1,21 +1,31 @@
-import React, { useState } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import React, { useState, useEffect } from 'react';
+import { useNavigate, useSearchParams, Link } from 'react-router-dom';
 import { useAuth, UserRole } from '../context/AuthContext';
 import { useApp } from '../context/AppContext';
-import { ArrowRight, AlertCircle, Loader2 } from 'lucide-react';
+import { ArrowRight, AlertCircle, Loader2, Users } from 'lucide-react';
 
 export const RegisterPage: React.FC = () => {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { register } = useAuth();
   const { refreshData } = useApp();
 
+  const invitationToken = searchParams.get('token') || undefined;
+  const inviteEmail = searchParams.get('email') || '';
+
   const [name, setName] = useState('');
-  const [email, setEmail] = useState('');
+  const [email, setEmail] = useState(inviteEmail);
   const [companyName, setCompanyName] = useState('');
   const [password, setPassword] = useState('');
-  const [role, setRole] = useState<UserRole>('finance_admin');
+  const [role, setRole] = useState<UserRole>(invitationToken ? 'member' : 'owner');
   const [isLoading, setIsLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (inviteEmail) {
+      setEmail(inviteEmail);
+    }
+  }, [inviteEmail]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -33,7 +43,7 @@ export const RegisterPage: React.FC = () => {
     setErrorMsg(null);
 
     try {
-      await register(name, email, password, companyName || `${name}'s Org`, role);
+      await register(name, email, password, companyName || `${name}'s Org`, role, invitationToken);
       navigate('/app/dashboard', { replace: true });
       refreshData().catch(() => {});
     } catch (err: any) {
@@ -46,7 +56,7 @@ export const RegisterPage: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-slate-50/80 flex flex-col justify-center py-12 sm:px-6 lg:px-8 relative overflow-hidden font-sans">
-      {/* Figma Radial Blue Ambient Glow */}
+      {/* Radial Blue Ambient Glow */}
       <div className="absolute top-1/4 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-blue-500/10 rounded-full blur-[140px] pointer-events-none" />
 
       {/* Brand Header */}
@@ -61,10 +71,12 @@ export const RegisterPage: React.FC = () => {
         </Link>
         <div>
           <h2 className="text-2xl font-bold tracking-tight text-slate-900">
-            Create organization workspace
+            {invitationToken ? 'Accept workspace invitation' : 'Create organization workspace'}
           </h2>
           <p className="text-xs text-slate-500 mt-1">
-            Isolate and automate your company's accounts payable workflows
+            {invitationToken
+              ? 'Join your team on InvoiceFlow AI to collaborate on accounts payable'
+              : "Isolate and automate your company's accounts payable workflows"}
           </p>
         </div>
       </div>
@@ -72,6 +84,16 @@ export const RegisterPage: React.FC = () => {
       {/* Register Form Card */}
       <div className="mt-8 sm:mx-auto sm:w-full sm:max-w-md relative z-10 px-4">
         <div className="bg-white/95 backdrop-blur-xl border border-slate-200/80 rounded-2xl p-8 shadow-xl shadow-slate-200/50 ring-1 ring-slate-900/5 space-y-5">
+          {invitationToken && (
+            <div className="p-3.5 rounded-xl bg-blue-50 border border-blue-200 text-blue-800 text-xs flex items-start gap-2.5">
+              <Users className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
+              <div>
+                <span className="font-bold block">Team Invitation Detected</span>
+                <span>You are registering to join an existing organization workspace.</span>
+              </div>
+            </div>
+          )}
+
           {errorMsg && (
             <div className="p-3.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs flex items-start gap-2.5">
               <AlertCircle className="w-4 h-4 text-rose-500 shrink-0 mt-0.5" />
@@ -104,37 +126,43 @@ export const RegisterPage: React.FC = () => {
                 onChange={(e) => setEmail(e.target.value)}
                 placeholder="jane@company.com"
                 required
-                className="w-full px-3.5 py-2.5 bg-slate-50/50 border border-slate-200 rounded-xl text-sm text-slate-900 placeholder:text-slate-400 focus:bg-white focus:outline-hidden focus:border-blue-600 focus:ring-2 focus:ring-blue-600/20 transition-all font-medium"
+                disabled={Boolean(inviteEmail)}
+                className="w-full px-3.5 py-2.5 bg-slate-50/50 border border-slate-200 rounded-xl text-sm text-slate-900 placeholder:text-slate-400 focus:bg-white focus:outline-hidden focus:border-blue-600 focus:ring-2 focus:ring-blue-600/20 transition-all font-medium disabled:opacity-75 disabled:cursor-not-allowed"
               />
             </div>
 
-            <div>
-              <label className="block text-[13px] font-semibold text-slate-700 mb-1.5">
-                Company / Organization Name
-              </label>
-              <input
-                type="text"
-                value={companyName}
-                onChange={(e) => setCompanyName(e.target.value)}
-                placeholder="Acme Corp"
-                className="w-full px-3.5 py-2.5 bg-slate-50/50 border border-slate-200 rounded-xl text-sm text-slate-900 placeholder:text-slate-400 focus:bg-white focus:outline-hidden focus:border-blue-600 focus:ring-2 focus:ring-blue-600/20 transition-all font-medium"
-              />
-            </div>
+            {!invitationToken && (
+              <div>
+                <label className="block text-[13px] font-semibold text-slate-700 mb-1.5">
+                  Company / Organization Name
+                </label>
+                <input
+                  type="text"
+                  value={companyName}
+                  onChange={(e) => setCompanyName(e.target.value)}
+                  placeholder="Apex Global Technologies"
+                  className="w-full px-3.5 py-2.5 bg-slate-50/50 border border-slate-200 rounded-xl text-sm text-slate-900 placeholder:text-slate-400 focus:bg-white focus:outline-hidden focus:border-blue-600 focus:ring-2 focus:ring-blue-600/20 transition-all font-medium"
+                />
+              </div>
+            )}
 
-            <div>
-              <label className="block text-[13px] font-semibold text-slate-700 mb-1.5">
-                Role in Finance Team
-              </label>
-              <select
-                value={role}
-                onChange={(e) => setRole(e.target.value as UserRole)}
-                className="w-full px-3.5 py-2.5 bg-slate-50/50 border border-slate-200 rounded-xl text-sm text-slate-900 focus:bg-white focus:outline-hidden focus:border-blue-600 focus:ring-2 focus:ring-blue-600/20 transition-all font-medium cursor-pointer"
-              >
-                <option value="finance_admin">Finance Administrator</option>
-                <option value="accountant">Senior Accountant</option>
-                <option value="reviewer">Invoice Reviewer</option>
-              </select>
-            </div>
+            {!invitationToken && (
+              <div>
+                <label className="block text-[13px] font-semibold text-slate-700 mb-1.5">
+                  Role in Organization
+                </label>
+                <select
+                  value={role}
+                  onChange={(e) => setRole(e.target.value as UserRole)}
+                  className="w-full px-3.5 py-2.5 bg-slate-50/50 border border-slate-200 rounded-xl text-sm text-slate-900 focus:bg-white focus:outline-hidden focus:border-blue-600 focus:ring-2 focus:ring-blue-600/20 transition-all font-medium cursor-pointer"
+                >
+                  <option value="owner">Workspace Owner (Administrator)</option>
+                  <option value="accountant">Senior Accountant</option>
+                  <option value="reviewer">Invoice Reviewer</option>
+                  <option value="member">General Team Member</option>
+                </select>
+              </div>
+            )}
 
             <div>
               <div className="flex items-center justify-between mb-1.5">
@@ -160,11 +188,11 @@ export const RegisterPage: React.FC = () => {
               {isLoading ? (
                 <>
                   <Loader2 className="w-4 h-4 animate-spin" />
-                  <span>Creating workspace...</span>
+                  <span>{invitationToken ? 'Joining workspace...' : 'Creating workspace...'}</span>
                 </>
               ) : (
                 <>
-                  <span>Create workspace</span>
+                  <span>{invitationToken ? 'Join workspace' : 'Create workspace'}</span>
                   <ArrowRight className="w-4 h-4" />
                 </>
               )}

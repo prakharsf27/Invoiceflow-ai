@@ -3,6 +3,8 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import mongoose from 'mongoose';
 import { UserModel, UserRole } from '../models/User.js';
+import { CompanyModel } from '../models/Company.js';
+import { InvitationModel } from '../models/Invitation.js';
 import { getJwtSecret } from '../middleware/auth.js';
 
 /**
@@ -37,7 +39,7 @@ const generateAuthToken = (user: {
  */
 export const register = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { name, email, password, companyName, role } = req.body;
+    const { name, email, password, companyName, role, invitationToken } = req.body;
 
     if (!name || typeof name !== 'string' || name.trim() === '') {
       res.status(400).json({
@@ -73,23 +75,54 @@ export const register = async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
-    const cleanCompanyName = typeof companyName === 'string' && companyName.trim() !== ''
-      ? companyName.trim()
-      : `${name.trim()}'s Organization`;
+    let companyId: string;
+    let cleanCompanyName: string;
+    let userRole: UserRole;
+    let invitedBy: string | undefined = undefined;
 
-    const companySlug = cleanCompanyName
-      .toLowerCase()
-      .replace(/[^a-z0-9]/g, '')
-      .slice(0, 12);
-    const companyId = `comp-${companySlug}-${Date.now().toString(36)}`;
+    // Check if registering via team invitation token
+    if (invitationToken) {
+      const invitation = await InvitationModel.findOne({
+        token: invitationToken,
+        status: 'pending',
+        expiresAt: { $gt: new Date() },
+      });
+
+      if (!invitation) {
+        res.status(400).json({
+          success: false,
+          error: 'Invitation token is invalid, expired, or already used.',
+        });
+        return;
+      }
+
+      companyId = invitation.companyId;
+      cleanCompanyName = invitation.companyName;
+      userRole = invitation.role || 'member';
+      invitedBy = invitation.invitedBy;
+
+      // Mark invitation accepted
+      invitation.status = 'accepted';
+      await invitation.save();
+    } else {
+      cleanCompanyName = typeof companyName === 'string' && companyName.trim() !== ''
+        ? companyName.trim()
+        : `${name.trim()}'s Organization`;
+
+      const companySlug = cleanCompanyName
+        .toLowerCase()
+        .replace(/[^a-z0-9]/g, '')
+        .slice(0, 12);
+      companyId = `comp-${companySlug}-${Date.now().toString(36)}`;
+      const validRoles: UserRole[] = ['owner', 'member', 'finance_admin', 'accountant', 'reviewer'];
+      userRole = validRoles.includes(role) ? role : 'owner';
+    }
+
     const userId = `usr-${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 6)}`;
 
     // Hash password securely with bcrypt
     const saltRounds = 10;
     const passwordHash = await bcrypt.hash(password, saltRounds);
-
-    const validRoles: UserRole[] = ['finance_admin', 'accountant', 'reviewer'];
-    const userRole: UserRole = validRoles.includes(role) ? role : 'finance_admin';
 
     const newUser = await UserModel.create({
       id: userId,
@@ -100,7 +133,21 @@ export const register = async (req: Request, res: Response): Promise<void> => {
       companyId,
       companyName: cleanCompanyName,
       isActive: true,
+      invitedBy,
     });
+
+    // If new company created, persist CompanyModel record
+    if (!invitationToken) {
+      await CompanyModel.create({
+        id: companyId,
+        name: cleanCompanyName,
+        ownerId: userId,
+        membersCount: 1,
+      });
+    } else {
+      const currentCount = await UserModel.countDocuments({ companyId, isActive: true });
+      await CompanyModel.updateOne({ id: companyId }, { $set: { membersCount: currentCount } });
+    }
 
     const userPayload = {
       id: newUser.id,

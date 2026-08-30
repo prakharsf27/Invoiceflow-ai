@@ -31,6 +31,13 @@ declare global {
 }
 
 /**
+ * Check whether a user role has owner-level administrative rights.
+ */
+export const isOwnerRole = (role?: string): boolean => {
+  return role === 'owner' || role === 'finance_admin';
+};
+
+/**
  * Authentication middleware to verify JWT token and enforce company-level data isolation.
  */
 export const requireAuth = async (
@@ -95,4 +102,31 @@ export const requireAuth = async (
       error: 'Authentication processing error',
     });
   }
+};
+
+/**
+ * Authorization middleware to restrict administrative endpoints to company Owners.
+ */
+export const requireOwner = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  if (!req.user) {
+    res.status(401).json({
+      success: false,
+      error: 'Authentication required.',
+    });
+    return;
+  }
+
+  if (!isOwnerRole(req.user.role)) {
+    res.status(403).json({
+      success: false,
+      error: 'Access denied. Only company owners and administrators can perform this action.',
+    });
+    return;
+  }
+
+  next();
 };

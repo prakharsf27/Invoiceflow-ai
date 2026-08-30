@@ -1,6 +1,6 @@
 import mongoose, { Schema, Document } from 'mongoose';
 
-export type UserRole = 'finance_admin' | 'accountant' | 'reviewer';
+export type UserRole = 'owner' | 'member' | 'finance_admin' | 'accountant' | 'reviewer';
 
 export interface IUserDocument extends Document {
   id: string;
@@ -11,6 +11,7 @@ export interface IUserDocument extends Document {
   companyId: string;
   companyName: string;
   isActive: boolean;
+  invitedBy?: string;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -23,14 +24,17 @@ const UserSchema = new Schema<IUserDocument>(
     passwordHash: { type: String, required: true },
     role: {
       type: String,
-      enum: ['finance_admin', 'accountant', 'reviewer'],
-      default: 'finance_admin',
+      enum: ['owner', 'member', 'finance_admin', 'accountant', 'reviewer'],
+      default: 'owner',
     },
     companyId: { type: String, required: true, index: true },
     companyName: { type: String, required: true, trim: true },
     isActive: { type: Boolean, default: true },
+    invitedBy: { type: String },
   },
   { timestamps: true }
 );
+
+UserSchema.index({ companyId: 1, email: 1 });
 
 export const UserModel = mongoose.model<IUserDocument>('User', UserSchema, 'users');
