@@ -78,7 +78,7 @@ export const POMatchingPage: React.FC = () => {
           <div className="space-y-1 max-w-sm mx-auto">
             <h3 className="text-base font-bold text-slate-900">No Purchase Orders Found</h3>
             <p className="text-xs text-slate-500">
-              Upload invoices with PO references to perform automated 3-way matching with your procurement database.
+              Upload invoices with PO references to perform automated 3-way matching with your procurement records.
             </p>
           </div>
           <Button onClick={() => navigate('/app/upload')} variant="brand" size="sm" className="cursor-pointer">

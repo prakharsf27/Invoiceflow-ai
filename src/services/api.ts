@@ -7,6 +7,47 @@ export interface ApiResponse<T> {
   error?: string;
 }
 
+export const sanitizeUserErrorMessage = (rawMessage?: string): string => {
+  if (!rawMessage || typeof rawMessage !== 'string') {
+    return 'An unexpected error occurred. Please try again.';
+  }
+
+  const lower = rawMessage.toLowerCase();
+
+  // Rate limiting / quota errors
+  if (
+    lower.includes('resource_exhausted') ||
+    lower.includes('quota') ||
+    lower.includes('rate limit') ||
+    lower.includes('429')
+  ) {
+    return 'AI processing is temporarily busy. Please try again in a few moments.';
+  }
+
+  // Provider / model names leakage
+  if (
+    lower.includes('gemini') ||
+    lower.includes('groq') ||
+    lower.includes('gpt-oss') ||
+    lower.includes('qwen') ||
+    lower.includes('model_not_found')
+  ) {
+    return 'AI processing encountered a temporary issue. Please try again shortly.';
+  }
+
+  // Database / infrastructure leakage
+  if (
+    lower.includes('mongodb') ||
+    lower.includes('mongoservererror') ||
+    lower.includes('mongoose') ||
+    lower.includes('econnrefused')
+  ) {
+    return 'Unable to access company records right now. Please try again shortly.';
+  }
+
+  return rawMessage;
+};
+
 export const getAuthToken = (): string | null => {
   try {
     return localStorage.getItem('invoiceflow_token');
@@ -53,7 +94,7 @@ export const fetchApi = async <T>(endpoint: string, options?: RequestInit): Prom
         }
       }
 
-      const errorMsg =
+      const rawMsg =
         errorJson?.error ||
         errorJson?.message ||
         (response.status === 401
@@ -66,7 +107,8 @@ export const fetchApi = async <T>(endpoint: string, options?: RequestInit): Prom
           ? 'Server error occurred. Please try again in a few moments.'
           : `Request failed with status ${response.status}`);
 
-      throw new Error(errorMsg);
+      const sanitized = sanitizeUserErrorMessage(rawMsg);
+      throw new Error(sanitized);
     }
 
     const json: any = await response.json();
@@ -76,6 +118,7 @@ export const fetchApi = async <T>(endpoint: string, options?: RequestInit): Prom
     if (err.name === 'TypeError' && err.message?.includes('fetch')) {
       throw new Error('Unable to connect to the backend server. Please verify network connectivity.');
     }
+    err.message = sanitizeUserErrorMessage(err.message);
     throw err;
   }
 };

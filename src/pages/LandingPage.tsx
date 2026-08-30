@@ -30,7 +30,6 @@ import { formatFullINR } from '../lib/utils';
 
 export const LandingPage: React.FC = () => {
   const navigate = useNavigate();
-  const [activeFeatureTab, setActiveFeatureTab] = useState<'extraction' | 'matching' | 'exceptions' | 'suppliers' | 'copilot'>('extraction');
 
   return (
     <div className="min-h-screen bg-[#F8FAFC] text-slate-900 flex flex-col font-sans antialiased selection:bg-slate-900 selection:text-white">
@@ -39,7 +38,7 @@ export const LandingPage: React.FC = () => {
         <span className="bg-brand-500/20 text-brand-300 border border-brand-400/30 px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider">
           Live Demo Ready
         </span>
-        <span>Razorpay Buildathon Edition — Multi-tenant AP automation with Gemini + Groq AI provider fallback</span>
+        <span>Razorpay Buildathon Edition — Multi-tenant autonomous accounts payable & invoice intelligence</span>
         <button
           onClick={() => navigate('/login')}
           className="underline hover:text-brand-300 ml-1 font-semibold cursor-pointer inline-flex items-center gap-0.5"
@@ -133,7 +132,7 @@ export const LandingPage: React.FC = () => {
                 <CheckCircle2 className="w-4 h-4 text-emerald-600" /> Multi-Tenant Workspace Isolation
               </span>
               <span className="flex items-center gap-1.5">
-                <CheckCircle2 className="w-4 h-4 text-emerald-600" /> Dual Gemini + Groq AI Fallback
+                <CheckCircle2 className="w-4 h-4 text-emerald-600" /> High-Availability AI Engine
               </span>
               <span className="flex items-center gap-1.5">
                 <CheckCircle2 className="w-4 h-4 text-emerald-600" /> 100% Audit Trail Logging
@@ -303,7 +302,7 @@ export const LandingPage: React.FC = () => {
             <div className="space-y-1">
               <div className="text-3xl font-extrabold text-brand-600 tabular-nums">2.8 sec</div>
               <div className="text-xs font-semibold text-slate-500 uppercase tracking-wider">AI Extraction Speed</div>
-              <p className="text-[11px] text-slate-400">Gemini 2.5 Flash + Groq high-speed fallback</p>
+              <p className="text-[11px] text-slate-400">High-speed autonomous extraction</p>
             </div>
 
             <div className="space-y-1">
@@ -426,7 +425,7 @@ export const LandingPage: React.FC = () => {
                 </div>
                 <h3 className="text-base font-bold text-slate-900">Supplier Management Hub</h3>
                 <p className="text-xs text-slate-600 leading-relaxed">
-                  Centralized vendor database with GSTIN verification, historical spend analytics, payment terms, and verified primary bank mandate records.
+                  Centralized vendor directory with GSTIN verification, historical spend analytics, payment terms, and verified primary bank mandate records.
                 </p>
               </div>
 
@@ -484,7 +483,7 @@ export const LandingPage: React.FC = () => {
               </div>
               <h4 className="text-sm font-bold text-slate-900">Company Data Isolation</h4>
               <p className="text-xs text-slate-600 leading-relaxed">
-                Strict multi-tenant MongoDB query boundaries. Users belonging to Company A can never access or query records from Company B.
+                Strict multi-tenant workspace boundaries. Users belonging to Company A can never access or query records from Company B.
               </p>
             </div>
 
@@ -492,9 +491,9 @@ export const LandingPage: React.FC = () => {
               <div className="w-8 h-8 rounded-lg bg-blue-100 text-blue-800 flex items-center justify-center font-bold">
                 <Server className="w-4 h-4" />
               </div>
-              <h4 className="text-sm font-bold text-slate-900">Dual AI Fallback Architecture</h4>
+              <h4 className="text-sm font-bold text-slate-900">High-Availability AI Engine</h4>
               <p className="text-xs text-slate-600 leading-relaxed">
-                Google Gemini primary with automatic, sub-second failover to Groq (<code className="text-[11px] font-mono bg-slate-100 px-1 py-0.5 rounded">gpt-oss-120b</code> / <code className="text-[11px] font-mono bg-slate-100 px-1 py-0.5 rounded">qwen3.6-27b</code>) if rate limits or 429 errors occur.
+                Resilient dual-engine architecture with sub-second failover for uninterrupted operations during peak invoice processing loads.
               </p>
             </div>
 
@@ -567,7 +566,7 @@ export const LandingPage: React.FC = () => {
             <h4 className="font-bold text-slate-900 text-xs mb-3">Intelligence & Security</h4>
             <ul className="space-y-2 text-slate-600">
               <li><a href="#trust" className="hover:text-slate-900">AI Finance Copilot</a></li>
-              <li><a href="#trust" className="hover:text-slate-900">Gemini + Groq Fallback</a></li>
+              <li><a href="#trust" className="hover:text-slate-900">Autonomous AI Engine</a></li>
               <li><a href="#trust" className="hover:text-slate-900">Bank Fraud Verification</a></li>
               <li><a href="#trust" className="hover:text-slate-900">Company Data Isolation</a></li>
             </ul>
@@ -585,7 +584,7 @@ export const LandingPage: React.FC = () => {
 
         <div className="max-w-7xl mx-auto pt-6 border-t border-slate-100 flex flex-col sm:flex-row items-center justify-between gap-3 text-[11px] text-slate-400">
           <div>© 2026 InvoiceFlow AI. Built for the Razorpay Buildathon.</div>
-          <div>React • Vite • Node.js • Express • MongoDB • Google Gemini • Groq</div>
+          <div>React • Vite • Node.js • Express • InvoiceFlow AI Platform</div>
         </div>
       </footer>
     </div>

@@ -83,13 +83,13 @@ export const ReportsPage: React.FC = () => {
           <div className="text-2xl font-extrabold text-slate-900 tabular-nums">
             {totalInvoices > 0 ? '2.8 sec' : '0 sec'}
           </div>
-          <span className="text-xs text-slate-400">Gemini 2.5 Flash OCR</span>
+          <span className="text-xs text-slate-400">Autonomous AI OCR</span>
         </Card>
 
         <Card className="p-4 space-y-1">
           <span className="text-xs font-semibold text-slate-500 uppercase">Total Tracked Payables</span>
           <div className="text-2xl font-extrabold text-slate-900 tabular-nums">₹{totalVerifiedSpend.toLocaleString('en-IN')}</div>
-          <span className="text-xs text-slate-400">Company DB records</span>
+          <span className="text-xs text-slate-400">Company financial records</span>
         </Card>
       </div>
 
