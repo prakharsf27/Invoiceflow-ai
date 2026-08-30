@@ -4,10 +4,9 @@ import { InvoiceModel } from '../models/Invoice.js';
 import { PurchaseOrderModel } from '../models/PurchaseOrder.js';
 import { SupplierModel } from '../models/Supplier.js';
 import { documentStorageService } from './storage/documentStorageService.js';
-import { documentTypeService } from './documentTypeService.js';
-import { aiExtractionService } from './ai/aiExtractionService.js';
 import { documentValidationService } from './documentValidationService.js';
 import { poMatchingService } from './poMatchingService.js';
+import { hybridExtractionService } from './extraction/hybridExtractionService.js';
 
 const escapeRegExp = (str: string): string => {
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -22,8 +21,9 @@ class DocumentProcessingService {
   }
 
   /**
-   * Orchestrate full document processing: Extraction -> Financial Math Validation -> PO Matching -> DB Sync.
-   * Enforces strict idempotency and caching with atomic updates to avoid VersionErrors.
+   * Orchestrate full document processing:
+   * PDF Text / OCR -> Deterministic Extraction -> AI Fallback (if required) ->
+   * Financial Math Validation -> PO Matching -> DB Sync.
    */
   public async processDocument(
     documentId: string,
@@ -67,6 +67,8 @@ class DocumentProcessingService {
               fileHash,
               documentType: duplicateDoc.documentType,
               extractedData: duplicateDoc.extractedData,
+              extractionMethod: duplicateDoc.extractionMethod || 'pdf_text',
+              aiAssisted: duplicateDoc.aiAssisted || false,
               validationResults: duplicateDoc.validationResults,
               matchResult: duplicateDoc.matchResult,
               processingStatus: 'processed',
@@ -93,37 +95,31 @@ class DocumentProcessingService {
       }
     );
 
-    let docType: string = (doc.documentType && doc.documentType !== 'unknown') ? doc.documentType : 'unknown';
+    let docType: import('../models/Document.js').DocumentType = (doc.documentType && doc.documentType !== 'unknown') ? doc.documentType : 'unknown';
 
     try {
-      // 4. Determine Document Type
-      if (docType === 'unknown') {
-        docType = documentTypeService.detectTypeFromFilename(doc.originalFileName);
-        if (docType === 'unknown') {
-          const aiClass = await aiExtractionService.classifyUnknownDocument(fileBuffer, doc.mimeType, {
-            companyId,
-            userId,
-          });
-          if (aiClass.documentType !== 'unknown') {
-            docType = aiClass.documentType;
-          }
+      // 4. Run Hybrid Extraction (PDF Text -> OCR -> Deterministic -> AI Fallback)
+      const extractionResult = await hybridExtractionService.extractDocument(
+        fileBuffer,
+        doc.mimeType,
+        {
+          documentId,
+          originalFileName: doc.originalFileName,
+          docTypeHint: docType,
+          companyId,
+          userId,
         }
-      }
+      );
 
-      let extractedPayload: any = null;
+      docType = extractionResult.documentType;
+      const extractedPayload: any = extractionResult.data;
       let validationResults: any[] = [];
       let matchResult: any = null;
       let supplierResult: any = undefined;
       let linkedRecordId: string | undefined = undefined;
 
-      // 5. Extract Structured Data via AI Extraction Service
+      // 5. Financial Validation & Domain Logic Persistence
       if (docType === 'purchase_order') {
-        const poRes = await aiExtractionService.extractPODocument(fileBuffer, doc.mimeType, {
-          companyId,
-          userId,
-        });
-        extractedPayload = poRes.data;
-
         // Perform financial math validation
         const valRes = documentValidationService.validateFinancialMath(extractedPayload);
         validationResults = valRes.validationChecks;
@@ -198,22 +194,26 @@ class DocumentProcessingService {
           { upsert: true, returnDocument: 'after' }
         );
 
-        linkedRecordId = createdPO.id || createdPO._id?.toString();
+        linkedRecordId = createdPO?.id || createdPO?._id?.toString();
+
+        // After PO is successfully stored, re-match all company invoices referencing this PO number
+        const processedPONum = (extractedPayload.poNumber || '').trim();
+        if (processedPONum) {
+          poMatchingService.rematchInvoicesForPO(companyId, processedPONum)
+            .catch((err: any) => console.warn('[DocumentProcessingService] rematchInvoicesForPO non-blocking error:', err?.message));
+        }
       } else {
-        // Default to Invoice extraction
+        // Invoice processing
         docType = 'invoice';
-        const invRes = await aiExtractionService.extractInvoiceDocument(fileBuffer, doc.mimeType, {
-          companyId,
-          userId,
-        });
-        extractedPayload = invRes.data;
 
         // Financial Math Validation in TypeScript (0 AI calls)
         const valRes = documentValidationService.validateFinancialMath(extractedPayload);
         validationResults = valRes.validationChecks;
 
         // Automatic PO Matching in TypeScript (0 AI calls)
+        console.log(`[DocumentProcessingService] Running PO matching for invoice document ${documentId}...`);
         matchResult = await poMatchingService.matchInvoiceToPO(companyId, extractedPayload);
+        console.log(`[DocumentProcessingService] PO match status for ${documentId}: ${matchResult.matchStatus} (score: ${matchResult.matchScore}%)`);
 
         const invNum = (extractedPayload.invoiceNumber || `INV-${Date.now()}`).trim();
         const invSubtotal = extractedPayload.subtotal || valRes.computedSubtotal;
@@ -226,11 +226,10 @@ class DocumentProcessingService {
         let status = isPOMatched && isMathValid ? 'ready' : (matchResult.matchStatus === 'mismatch' ? 'critical' : 'review');
         let aiStatus = isPOMatched && isMathValid ? 'Ready' : (matchResult.matchStatus === 'mismatch' ? 'PO Mismatch' : (!isMathValid ? 'Math Discrepancy' : 'Needs Review'));
 
-        // 5a. Supplier Automation: Associate with existing supplier or auto-create within tenant
+        // Supplier Automation: Associate with existing supplier or auto-create within tenant
         let supplierId = `sup-${(extractedPayload.supplierName || 'custom').toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 10)}`;
         let finalSupplierName = extractedPayload.supplierName || 'Supplier Pvt Ltd';
         let isBankChanged = false;
-        let supplierResult: any = undefined;
 
         try {
           const supplierGstin = (extractedPayload.supplierGstin || '').trim();
@@ -248,7 +247,6 @@ class DocumentProcessingService {
             ? await SupplierModel.findOne({ companyId, $or: searchConds })
             : null;
 
-          // Check if invoice already exists to ensure idempotency
           const existingInvoice = await InvoiceModel.findOne({
             companyId,
             invoiceNumber: new RegExp(`^${escapeRegExp(invNum)}$`, 'i'),
@@ -359,7 +357,7 @@ class DocumentProcessingService {
               discount: extractedPayload.discount || 0,
               invoiceDate: extractedPayload.invoiceDate || new Date().toISOString().split('T')[0],
               dueDate: extractedPayload.dueDate || new Date(Date.now() + 15 * 86400000).toISOString().split('T')[0],
-              poNumber: extractedPayload.poNumber || matchResult.poNumber,
+              poNumber: extractedPayload.poNumber || matchResult?.poNumber,
               aiStatus: isBankChanged ? 'Bank Detail Change' : aiStatus,
               status: isBankChanged ? 'critical' : status,
               paymentStatus: isBankChanged ? 'on_hold' : (status === 'ready' ? 'scheduled' : 'pending'),
@@ -397,7 +395,7 @@ class DocumentProcessingService {
           { upsert: true, returnDocument: 'after' }
         );
 
-        linkedRecordId = createdInvoice.id || createdInvoice._id?.toString();
+        linkedRecordId = createdInvoice?.id || createdInvoice?._id?.toString();
       }
 
       // Update Document record status atomically
@@ -407,6 +405,8 @@ class DocumentProcessingService {
           $set: {
             documentType: docType,
             extractedData: extractedPayload,
+            extractionMethod: extractionResult.extractionMethod,
+            aiAssisted: extractionResult.aiAssisted,
             validationResults,
             matchResult,
             supplierResult,
@@ -419,13 +419,11 @@ class DocumentProcessingService {
         { returnDocument: 'after' }
       );
 
+      console.log(`[EXTRACTION] Document ${documentId} → extraction and matching pipeline completed successfully.`);
       return finalDoc || doc;
     } catch (err: any) {
       const failureReason = err?.message || String(err);
-      console.error(`❌ [DocumentExtractionFailed] Document ID: "${documentId}" | Type: "${docType || doc.documentType || 'unknown'}"`);
-      console.error(`   Primary Provider Attempted: Google Gemini (gemini-3.6-flash / gemini-2.5-flash)`);
-      console.error(`   Fallback Provider Attempted: Groq (qwen/qwen3.6-27b)`);
-      console.error(`   Failure Reason / Error: ${failureReason}`);
+      console.error(`❌ [EXTRACTION] Document ${documentId} processing failed: ${failureReason}`);
 
       const failedDoc = await DocumentModel.findOneAndUpdate(
         { id: documentId, companyId },

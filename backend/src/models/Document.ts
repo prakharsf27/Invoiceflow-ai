@@ -45,6 +45,8 @@ export interface IDocumentEntity extends Document {
   storageReference: string;
   processingStatus: ProcessingStatus;
   extractionStatus: ExtractionStatus;
+  extractionMethod?: 'pdf_text' | 'ocr' | 'ai';
+  aiAssisted?: boolean;
   extractionError?: string;
   extractedData?: any;
   validationResults?: IDocumentValidationCheck[];
@@ -86,6 +88,11 @@ const DocumentSchema = new Schema<IDocumentEntity>(
       default: 'pending',
       index: true,
     },
+    extractionMethod: {
+      type: String,
+      enum: ['pdf_text', 'ocr', 'ai'],
+    },
+    aiAssisted: { type: Boolean, default: false },
     extractionError: { type: String },
     extractedData: { type: Schema.Types.Mixed },
     validationResults: [{ type: Schema.Types.Mixed }],

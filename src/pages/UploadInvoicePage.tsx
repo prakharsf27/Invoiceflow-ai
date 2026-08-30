@@ -588,6 +588,15 @@ export const UploadInvoicePage: React.FC = () => {
                           {doc.extractionStatus === 'extracted' && (
                             <span className="text-[10px] font-semibold px-2 py-0.5 bg-emerald-50 text-emerald-700 rounded flex items-center gap-1">
                               <CheckCircle2 className="w-3 h-3 text-emerald-600" /> Extracted
+                              {doc.extractionMethod === 'pdf_text' && (
+                                <span className="text-[9px] font-mono text-emerald-600/80 uppercase">PDF</span>
+                              )}
+                              {doc.extractionMethod === 'ocr' && (
+                                <span className="text-[9px] font-mono text-emerald-600/80 uppercase">OCR</span>
+                              )}
+                              {doc.extractionMethod === 'ai' && (
+                                <span className="text-[9px] font-mono text-emerald-600/80 uppercase">AI</span>
+                              )}
                             </span>
                           )}
                           {doc.extractionStatus === 'failed' && (
@@ -777,6 +786,18 @@ export const UploadInvoicePage: React.FC = () => {
                         </span>
                       </div>
                       <div className="p-3 bg-slate-50 rounded-lg">
+                        <span className="text-[11px] text-slate-400 font-medium block">Extraction Method</span>
+                        <span className="font-semibold text-slate-900 capitalize flex items-center gap-1">
+                          {selectedDoc.extractionMethod === 'pdf_text' ? (
+                            <span className="text-emerald-700">PDF Text (Direct)</span>
+                          ) : selectedDoc.extractionMethod === 'ocr' ? (
+                            <span className="text-blue-700">OCR Scanned</span>
+                          ) : (
+                            <span className="text-purple-700">AI-Assisted</span>
+                          )}
+                        </span>
+                      </div>
+                      <div className="p-3 bg-slate-50 rounded-lg">
                         <span className="text-[11px] text-slate-400 font-medium block">
                           {selectedDoc.documentType === 'purchase_order' ? 'PO #' : 'Invoice #'}
                         </span>
@@ -800,12 +821,6 @@ export const UploadInvoicePage: React.FC = () => {
                         <span className="text-[11px] text-slate-400 font-medium block">Total Amount</span>
                         <span className="font-bold text-slate-900 text-sm">
                           ₹{(selectedDoc.extractedData.amount || selectedDoc.extractedData.total || 0).toLocaleString('en-IN')}
-                        </span>
-                      </div>
-                      <div className="p-3 bg-slate-50 rounded-lg">
-                        <span className="text-[11px] text-slate-400 font-medium block">Extracted At</span>
-                        <span className="text-slate-700">
-                          {formatDate(selectedDoc.extractedAt)}
                         </span>
                       </div>
                     </div>

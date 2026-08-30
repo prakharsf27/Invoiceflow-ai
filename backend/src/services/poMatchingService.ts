@@ -145,10 +145,10 @@ class POMatchingService {
     let matchStatus: IPOMatchResult['matchStatus'] = 'no_match';
     if (score >= 90 && discrepancies.length === 0) {
       matchStatus = 'matched';
-    } else if (score >= 60 || (poNumMatch && discrepancies.length <= 1)) {
-      matchStatus = 'partial_match';
     } else if (discrepancies.length > 0) {
       matchStatus = 'mismatch';
+    } else if (score >= 60 || poNumMatch) {
+      matchStatus = 'partial_match';
     } else {
       matchStatus = 'needs_review';
     }
@@ -166,6 +166,90 @@ class POMatchingService {
         totalAmount: poTotal,
       },
     };
+  }
+
+  /**
+   * Re-run PO matching for all invoices in a company that reference a given PO number.
+   * Called after a PO document is successfully processed to propagate match results to
+   * invoices that were extracted before the PO was uploaded.
+   */
+  public async rematchInvoicesForPO(
+    companyId: string,
+    poNumber: string
+  ): Promise<{ rematchedCount: number; invoiceIds: string[] }> {
+    if (!poNumber || !companyId) return { rematchedCount: 0, invoiceIds: [] };
+
+    console.log(`[PO MATCH] Re-matching invoices for newly processed PO: "${poNumber}" in company ${companyId}...`);
+
+    const invoiceDocs: any[] = await DocumentModel.find({
+      companyId,
+      documentType: 'invoice',
+      extractionStatus: 'extracted',
+      $or: [
+        { 'extractedData.poNumber': new RegExp(`^${poNumber.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') },
+        { 'matchResult.matchStatus': 'no_match' },
+        { matchResult: { $exists: false } },
+        { matchResult: null },
+      ],
+    } as any);
+
+    const rematchedIds: string[] = [];
+
+    for (const invoiceDoc of invoiceDocs) {
+      const invPORef = (invoiceDoc.extractedData?.poNumber || '').trim().toLowerCase();
+      const targetPO = poNumber.toLowerCase();
+      if (invPORef && invPORef !== targetPO) {
+        continue;
+      }
+
+      try {
+        const newMatchResult = await this.matchInvoiceToPO(companyId, invoiceDoc.extractedData);
+        const oldStatus = invoiceDoc.matchResult?.matchStatus || 'no_match';
+        const newStatus = newMatchResult.matchStatus;
+
+        if (newStatus !== 'no_match' || oldStatus === 'no_match') {
+          await DocumentModel.updateOne(
+            { id: invoiceDoc.id, companyId },
+            {
+              $set: {
+                matchResult: newMatchResult,
+              },
+            }
+          );
+
+          if (invoiceDoc.linkedRecordId || invoiceDoc.extractedData?.invoiceNumber) {
+            const invNum = invoiceDoc.extractedData?.invoiceNumber;
+            if (invNum) {
+              const isPOMatched = newMatchResult.matchStatus === 'matched';
+              const isMathValid = (invoiceDoc.validationResults || []).every((c: any) => c.passed !== false);
+              const aiStatus = isPOMatched && isMathValid ? 'Ready'
+                : (newMatchResult.matchStatus === 'mismatch' ? 'PO Mismatch'
+                : (!isMathValid ? 'Math Discrepancy' : 'Needs Review'));
+
+              const { InvoiceModel } = await import('../models/Invoice.js');
+              await InvoiceModel.updateOne(
+                { companyId, invoiceNumber: new RegExp(`^${invNum.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') },
+                {
+                  $set: {
+                    poNumber: newMatchResult.poNumber || invoiceDoc.extractedData?.poNumber,
+                    aiStatus,
+                    status: isPOMatched && isMathValid ? 'ready' : 'review',
+                  },
+                }
+              );
+            }
+          }
+
+          rematchedIds.push(invoiceDoc.id);
+          console.log(`[PO MATCH] Re-matched document ${invoiceDoc.id}: ${oldStatus} → ${newStatus}`);
+        }
+      } catch (rematchErr: any) {
+        console.warn(`[PO MATCH] Re-match failed for document ${invoiceDoc.id}:`, rematchErr?.message);
+      }
+    }
+
+    console.log(`[PO MATCH] Re-match complete for PO "${poNumber}": ${rematchedIds.length} invoice(s) updated.`);
+    return { rematchedCount: rematchedIds.length, invoiceIds: rematchedIds };
   }
 }
 

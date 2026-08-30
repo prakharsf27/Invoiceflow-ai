@@ -75,6 +75,8 @@ export interface AppDocument {
   storageReference: string;
   processingStatus: AppDocumentProcessingStatus;
   extractionStatus: AppDocumentExtractionStatus;
+  extractionMethod?: 'pdf_text' | 'ocr' | 'ai';
+  aiAssisted?: boolean;
   extractionError?: string;
   extractedData?: any;
   validationResults?: AppDocumentValidationCheck[];
