@@ -24,7 +24,7 @@ export interface CopilotApiResponse {
 export const copilotService = {
   /**
    * Send question to authenticated backend POST /api/copilot/ask.
-   * Query is evaluated against user's company-isolated MongoDB records via Gemini 2.5 Flash.
+   * Evaluated against user's company-isolated dataset via the InvoiceFlow AI engine.
    */
   askCopilot: async (question: string): Promise<CopilotApiResponse> => {
     const res = await fetchApi<{ success: boolean; data: CopilotApiResponse }>('/copilot/ask', {

@@ -87,7 +87,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const [toast, setToast] = useState<ToastMessage | null>(null);
 
-  // Initial Data Fetching from MongoDB REST APIs (parallelized and non-blocking)
+  // Initial Data Fetching from REST APIs (parallelized and non-blocking)
   const fetchAllBackendData = useCallback(async () => {
     const token = localStorage.getItem('invoiceflow_token');
     if (!token) {
@@ -109,7 +109,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setPoData(fetchedPOs || []);
       setPaymentRecords(fetchedPayments || []);
     } catch (err) {
-      console.error('Failed to load data from backend MongoDB:', err);
+      console.error('Failed to load data from backend server:', err);
     } finally {
       setIsLoading(false);
     }
@@ -236,7 +236,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     });
   }, [invoices, paymentRecords]);
 
-  // Handlers communicating with MongoDB APIs
+  // Handlers communicating with backend APIs
   const updateInvoiceStatus = async (id: string, newStatus: InvoiceStatus) => {
     const isApproved = newStatus === 'ready' || newStatus === 'paid';
     const isHold = newStatus === 'hold' || newStatus === 'on_hold';
@@ -258,7 +258,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       })
     );
 
-    // Persist to MongoDB backend
+    // Persist to backend
     try {
       await invoiceService.updateInvoiceStatus(id, newStatus);
     } catch (err) {

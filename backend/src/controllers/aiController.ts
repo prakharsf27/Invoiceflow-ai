@@ -25,7 +25,7 @@ export const testGemini = async (req: Request, res: Response): Promise<void> => 
     if (!aiService.isConfigured()) {
       res.status(503).json({
         success: false,
-        error: 'Gemini API key is not configured. Please set GEMINI_API_KEY in backend/.env',
+        error: 'AI Engine is not configured. Please check backend environment configuration.',
         configured: false,
       });
       return;
@@ -55,7 +55,7 @@ export const testGemini = async (req: Request, res: Response): Promise<void> => 
 
 /**
  * GET /api/ai/status
- * Check if Gemini AI is configured and ready.
+ * Check if AI Engine is configured and ready.
  */
 export const getAiStatus = async (_req: Request, res: Response): Promise<void> => {
   try {
@@ -66,8 +66,8 @@ export const getAiStatus = async (_req: Request, res: Response): Promise<void> =
       configured: isConfigured,
       model,
       message: isConfigured
-        ? 'Gemini AI is configured and ready.'
-        : 'Gemini API key is missing. Set GEMINI_API_KEY in backend/.env',
+        ? 'AI Engine is configured and ready.'
+        : 'AI Engine API key is missing. Set GEMINI_API_KEY in backend/.env',
     });
   } catch (error: any) {
     res.status(500).json({

@@ -196,7 +196,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
             <span className="text-xs font-semibold text-slate-800">AI Engine Online</span>
           </div>
           <p className="text-[11px] text-slate-500 leading-tight">
-            Gemini 2.5 Flash + Groq fallback active.
+            Automated invoice intelligence active.
           </p>
         </div>
       </aside>

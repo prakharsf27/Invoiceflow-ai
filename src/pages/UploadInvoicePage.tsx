@@ -220,7 +220,7 @@ export const UploadInvoicePage: React.FC = () => {
       const updated = await documentService.reprocessDocument(docId);
       if (updated) {
         setSelectedDoc(updated);
-        showToast('Document reprocessed with Gemini 2.5 Flash & PO matching updated!', 'success');
+        showToast('Document reprocessed with AI & PO matching updated!', 'success');
         await loadCompanyDocuments(false);
       }
     } catch (err: any) {
@@ -272,7 +272,7 @@ export const UploadInvoicePage: React.FC = () => {
           Upload Center
         </h1>
         <p className="text-xs text-slate-500 mt-0.5">
-          Batch ingest invoices and purchase orders. Automatic Gemini OCR extraction & 3-way PO matching.
+          Batch ingest invoices and purchase orders. Automated AI OCR extraction & 3-way PO matching.
         </p>
       </div>
 
@@ -433,7 +433,7 @@ export const UploadInvoicePage: React.FC = () => {
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div>
             <h2 className="text-lg font-bold text-slate-900">Document Repository & Auto-Matching</h2>
-            <p className="text-xs text-slate-500">Uploaded documents, Gemini extractions, and 3-way PO match status</p>
+            <p className="text-xs text-slate-500">Uploaded documents, AI extractions, and 3-way PO match status</p>
           </div>
 
           <div className="flex items-center gap-3">
@@ -764,7 +764,7 @@ export const UploadInvoicePage: React.FC = () => {
                         <div>
                           <h5 className="font-bold text-xs">Supplier Profile</h5>
                           <p className="font-semibold text-xs mt-0.5">{selectedDoc.extractedData.supplierName}</p>
-                          <p className="text-[11px] mt-0.5 text-slate-500">Associated with verified company vendor database.</p>
+                          <p className="text-[11px] mt-0.5 text-slate-500">Associated with verified company vendor directory.</p>
                         </div>
                       </div>
                     ) : null}
@@ -847,7 +847,7 @@ export const UploadInvoicePage: React.FC = () => {
                   <div className="p-6 text-center space-y-2 bg-slate-50 rounded-xl">
                     <Clock className="w-6 h-6 text-slate-400 mx-auto" />
                     <p className="font-semibold text-slate-700">Document not processed yet</p>
-                    <p className="text-slate-500">Click Reprocess with AI below to run Gemini 2.5 Flash OCR extraction.</p>
+                    <p className="text-slate-500">Click Reprocess with AI below to run AI OCR extraction.</p>
                   </div>
                 )}
               </div>

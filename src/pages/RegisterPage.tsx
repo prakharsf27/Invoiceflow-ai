@@ -2,7 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams, Link } from 'react-router-dom';
 import { useAuth, UserRole } from '../context/AuthContext';
 import { useApp } from '../context/AppContext';
-import { ArrowRight, AlertCircle, Loader2, Users, Building, Mail, Lock, User, Eye, EyeOff } from 'lucide-react';
+import { companyService } from '../services/companyService';
+import { ArrowRight, AlertCircle, Loader2, Users, Building, Mail, Lock, User, Eye, EyeOff, ShieldCheck } from 'lucide-react';
 
 export const RegisterPage: React.FC = () => {
   const navigate = useNavigate();
@@ -10,12 +11,13 @@ export const RegisterPage: React.FC = () => {
   const { register } = useAuth();
   const { refreshData } = useApp();
 
-  const invitationToken = searchParams.get('token') || undefined;
+  const invitationToken = searchParams.get('invite') || searchParams.get('token') || undefined;
   const inviteEmail = searchParams.get('email') || '';
 
   const [name, setName] = useState('');
   const [email, setEmail] = useState(inviteEmail);
   const [companyName, setCompanyName] = useState('');
+  const [invitedCompanyName, setInvitedCompanyName] = useState<string | null>(null);
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [role, setRole] = useState<UserRole>(invitationToken ? 'member' : 'owner');
@@ -23,10 +25,21 @@ export const RegisterPage: React.FC = () => {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   useEffect(() => {
-    if (inviteEmail) {
+    if (invitationToken) {
+      companyService
+        .getInvitationInfo(invitationToken)
+        .then((info) => {
+          if (info.email) setEmail(info.email);
+          if (info.companyName) setInvitedCompanyName(info.companyName);
+          if (info.role) setRole(info.role as UserRole);
+        })
+        .catch((err) => {
+          console.warn('Could not load invitation details ahead of registration:', err);
+        });
+    } else if (inviteEmail) {
       setEmail(inviteEmail);
     }
-  }, [inviteEmail]);
+  }, [invitationToken, inviteEmail]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -44,7 +57,14 @@ export const RegisterPage: React.FC = () => {
     setErrorMsg(null);
 
     try {
-      await register(name.trim(), email.trim().toLowerCase(), password, companyName.trim() || `${name.trim()}'s Org`, role, invitationToken);
+      await register(
+        name.trim(),
+        email.trim().toLowerCase(),
+        password,
+        companyName.trim() || invitedCompanyName || `${name.trim()}'s Org`,
+        role,
+        invitationToken
+      );
       navigate('/app/dashboard', { replace: true });
       refreshData().catch(() => {});
     } catch (err: any) {
@@ -73,7 +93,7 @@ export const RegisterPage: React.FC = () => {
           </h2>
           <p className="text-xs text-slate-500 mt-1">
             {invitationToken
-              ? 'Join your team on InvoiceFlow AI to collaborate on accounts payable'
+              ? `Join ${invitedCompanyName || 'your team'} on InvoiceFlow AI`
               : "Isolate and automate your company's accounts payable workflows"}
           </p>
         </div>
@@ -83,11 +103,15 @@ export const RegisterPage: React.FC = () => {
       <div className="mt-7 sm:mx-auto sm:w-full sm:max-w-md px-4">
         <div className="bg-white border border-slate-200/90 rounded-2xl p-7 sm:p-8 shadow-card space-y-5">
           {invitationToken && (
-            <div className="p-3 rounded-xl bg-blue-50 border border-blue-200 text-blue-800 text-xs flex items-start gap-2.5">
-              <Users className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
+            <div className="p-3.5 rounded-xl bg-blue-50 border border-blue-200 text-blue-900 text-xs flex items-start gap-2.5">
+              <ShieldCheck className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
               <div>
-                <span className="font-bold block">Team Invitation Detected</span>
-                <span>You are registering to join an existing organization workspace.</span>
+                <span className="font-bold block">
+                  {invitedCompanyName ? `Invited to ${invitedCompanyName}` : 'Team Invitation Detected'}
+                </span>
+                <span className="text-[11px] text-blue-800">
+                  Creating an account will automatically add you as a verified member.
+                </span>
               </div>
             </div>
           )}
@@ -112,7 +136,7 @@ export const RegisterPage: React.FC = () => {
                   onChange={(e) => setName(e.target.value)}
                   placeholder="Jane Doe"
                   required
-                  className="w-full pl-9 pr-3.5 py-2 text-xs bg-slate-50 border border-slate-200 rounded-lg text-slate-900 placeholder:text-slate-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-slate-900/20 focus:border-slate-900 transition-all"
+                  className="w-full pl-9 pr-3.5 py-2 text-xs bg-slate-50 border border-slate-200 rounded-lg text-slate-900 placeholder:text-slate-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-slate-900 focus:border-slate-900 transition-all"
                 />
               </div>
             </div>
@@ -129,8 +153,7 @@ export const RegisterPage: React.FC = () => {
                   onChange={(e) => setEmail(e.target.value)}
                   placeholder="jane@company.com"
                   required
-                  disabled={Boolean(inviteEmail)}
-                  className="w-full pl-9 pr-3.5 py-2 text-xs bg-slate-50 border border-slate-200 rounded-lg text-slate-900 placeholder:text-slate-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-slate-900/20 focus:border-slate-900 transition-all disabled:opacity-75 disabled:cursor-not-allowed"
+                  className="w-full pl-9 pr-3.5 py-2 text-xs bg-slate-50 border border-slate-200 rounded-lg text-slate-900 placeholder:text-slate-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-slate-900 focus:border-slate-900 transition-all"
                 />
               </div>
             </div>
@@ -147,7 +170,7 @@ export const RegisterPage: React.FC = () => {
                     value={companyName}
                     onChange={(e) => setCompanyName(e.target.value)}
                     placeholder="Apex Global Technologies Pvt Ltd"
-                    className="w-full pl-9 pr-3.5 py-2 text-xs bg-slate-50 border border-slate-200 rounded-lg text-slate-900 placeholder:text-slate-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-slate-900/20 focus:border-slate-900 transition-all"
+                    className="w-full pl-9 pr-3.5 py-2 text-xs bg-slate-50 border border-slate-200 rounded-lg text-slate-900 placeholder:text-slate-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-slate-900 focus:border-slate-900 transition-all"
                   />
                 </div>
               </div>
@@ -161,7 +184,7 @@ export const RegisterPage: React.FC = () => {
                 <select
                   value={role}
                   onChange={(e) => setRole(e.target.value as UserRole)}
-                  className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-lg text-slate-900 focus:bg-white focus:outline-none focus:ring-2 focus:ring-slate-900/20 focus:border-slate-900 transition-all cursor-pointer font-medium"
+                  className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-lg text-slate-900 focus:bg-white focus:outline-none focus:ring-2 focus:ring-slate-900 focus:border-slate-900 transition-all cursor-pointer font-medium"
                 >
                   <option value="owner">Workspace Owner (Administrator)</option>
                   <option value="accountant">Senior Accountant</option>
@@ -185,7 +208,7 @@ export const RegisterPage: React.FC = () => {
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="••••••••"
                   required
-                  className="w-full pl-9 pr-10 py-2 text-xs bg-slate-50 border border-slate-200 rounded-lg text-slate-900 placeholder:text-slate-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-slate-900/20 focus:border-slate-900 transition-all"
+                  className="w-full pl-9 pr-10 py-2 text-xs bg-slate-50 border border-slate-200 rounded-lg text-slate-900 placeholder:text-slate-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-slate-900 focus:border-slate-900 transition-all"
                 />
                 <button
                   type="button"
@@ -219,7 +242,10 @@ export const RegisterPage: React.FC = () => {
           <div className="text-center pt-2 border-t border-slate-100">
             <p className="text-xs text-slate-500">
               Already have an account?{' '}
-              <Link to="/login" className="font-semibold text-slate-900 hover:underline transition-colors">
+              <Link
+                to={invitationToken ? `/login?invite=${invitationToken}` : '/login'}
+                className="font-semibold text-slate-900 hover:underline transition-colors"
+              >
                 Sign in here
               </Link>
             </p>

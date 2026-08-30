@@ -56,10 +56,14 @@ Return strict JSON matching this schema:
   "documentType": "purchase_order",
   "confidence": number between 0.0 and 1.0,
   "poNumber": string or null,
+  "poDate": "YYYY-MM-DD" or null,
+  "buyerName": string or null,
+  "buyerGstin": string or null,
   "supplierName": string or null,
   "supplierGstin": string or null,
   "supplierEmail": string or null,
-  "poDate": "YYYY-MM-DD" or null,
+  "deliveryAddress": string or null,
+  "paymentTerms": string or null,
   "expectedDeliveryDate": "YYYY-MM-DD" or null,
   "currency": string or null,
   "subtotal": number or null,
@@ -67,6 +71,7 @@ Return strict JSON matching this schema:
   "total": number or null,
   "lineItems": [
     {
+      "itemCode": string or null,
       "description": string,
       "quantity": number or null,
       "unitPrice": number or null,

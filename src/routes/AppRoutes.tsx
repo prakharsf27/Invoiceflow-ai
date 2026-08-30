@@ -17,6 +17,7 @@ import { SettingsPage } from '../pages/SettingsPage';
 import { LandingPage } from '../pages/LandingPage';
 import { LoginPage } from '../pages/LoginPage';
 import { RegisterPage } from '../pages/RegisterPage';
+import { InviteAcceptPage } from '../pages/InviteAcceptPage';
 import { NotFoundPage } from '../pages/NotFoundPage';
 import { ProtectedRoute } from '../components/auth/ProtectedRoute';
 
@@ -27,6 +28,7 @@ export const AppRoutes: React.FC = () => {
       <Route path="/" element={<LandingPage />} />
       <Route path="/login" element={<LoginPage />} />
       <Route path="/register" element={<RegisterPage />} />
+      <Route path="/invite/:token" element={<InviteAcceptPage />} />
 
       {/* Protected Multi-Tenant Workspace Routes */}
       <Route

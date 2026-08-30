@@ -310,8 +310,20 @@ export interface TeamInvitation {
   role: 'owner' | 'member' | 'finance_admin' | 'accountant' | 'reviewer';
   invitedByName: string;
   token: string;
+  invitationLink?: string;
   createdAt: string;
   expiresAt: string;
+}
+
+export interface InvitationInfo {
+  id: string;
+  companyId: string;
+  companyName: string;
+  email: string;
+  role: 'owner' | 'member' | 'finance_admin' | 'accountant' | 'reviewer';
+  invitedByName: string;
+  expiresAt: string;
+  status: 'pending' | 'accepted' | 'revoked' | 'expired';
 }
 
 export interface CompanyProfile {

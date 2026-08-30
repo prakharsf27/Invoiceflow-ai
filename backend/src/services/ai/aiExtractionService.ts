@@ -37,16 +37,21 @@ export interface ExtractedPOData {
   documentType: 'purchase_order';
   confidence: number;
   poNumber: string | null;
+  poDate: string | null;
+  buyerName: string | null;
+  buyerGstin: string | null;
   supplierName: string | null;
   supplierGstin: string | null;
   supplierEmail: string | null;
-  poDate: string | null;
+  deliveryAddress: string | null;
+  paymentTerms: string | null;
   expectedDeliveryDate: string | null;
   currency: string;
   subtotal: number | null;
   tax: number | null;
   total: number | null;
   lineItems: Array<{
+    itemCode: string | null;
     description: string;
     quantity: number | null;
     unitPrice: number | null;
@@ -55,6 +60,48 @@ export interface ExtractedPOData {
     total: number | null;
   }>;
 }
+
+/**
+ * Robust JSON extraction helper that handles markdown wrappers, preamble text,
+ * trailing commas, and unescaped linebreaks cleanly.
+ */
+export const cleanAndParseJson = (rawText: string): any => {
+  if (!rawText || typeof rawText !== 'string') {
+    throw new Error('Empty or invalid raw text from AI provider.');
+  }
+
+  // 1. Strip markdown codeblock markers
+  let cleaned = rawText
+    .replace(/^```json\s*/im, '')
+    .replace(/^```\s*/im, '')
+    .replace(/\s*```$/im, '')
+    .trim();
+
+  // 2. Extract first '{' to last '}' block if preamble/epilogue text exists
+  const firstBrace = cleaned.indexOf('{');
+  const lastBrace = cleaned.lastIndexOf('}');
+  if (firstBrace !== -1 && lastBrace > firstBrace) {
+    cleaned = cleaned.substring(firstBrace, lastBrace + 1);
+  }
+
+  // 3. Remove trailing commas before closing braces/brackets (e.g. { "a": 1, } or [ 1, 2, ])
+  cleaned = cleaned.replace(/,\s*([\}\]])/g, '$1');
+
+  // 4. Try standard JSON.parse
+  try {
+    return JSON.parse(cleaned);
+  } catch (firstErr: any) {
+    // 5. Secondary fallback: repair unescaped newlines inside strings
+    try {
+      const sanitized = cleaned
+        .replace(/([^\\])"([^"\n]*)\n([^"\n]*)"/g, '$1"$2\\n$3"')
+        .replace(/,\s*([\}\]])/g, '$1');
+      return JSON.parse(sanitized);
+    } catch {
+      throw new Error(`Failed to parse AI extraction JSON: ${firstErr?.message || 'Invalid JSON format'}`);
+    }
+  }
+};
 
 /**
  * Helper to extract number safely from raw AI response payloads,
@@ -99,20 +146,15 @@ class AIExtractionService {
       {
         ...context,
         systemInstruction: PROMPTS.INVOICE_EXTRACTION_SYSTEM_INSTRUCTION,
+        userPrompt: 'Perform anti-hallucination OCR extraction on this invoice document. Return valid JSON matching the invoice schema.',
       }
     );
 
-    const cleaned = jsonText
-      .replace(/^```json\s*/i, '')
-      .replace(/^```\s*/i, '')
-      .replace(/\s*```$/, '')
-      .trim();
-
     let parsed: any = {};
     try {
-      parsed = JSON.parse(cleaned);
+      parsed = cleanAndParseJson(jsonText);
     } catch (err: any) {
-      throw new Error(`Failed to parse AI extraction JSON: ${err?.message || 'Invalid JSON format'}`);
+      throw new Error(`Failed to parse AI invoice extraction JSON: ${err?.message || 'Invalid JSON format'}`);
     }
 
     const subtotal = extractNumber(parsed.subtotal);
@@ -153,7 +195,7 @@ class AIExtractionService {
         : [],
     };
 
-    return { data, rawJson: cleaned, model };
+    return { data, rawJson: JSON.stringify(parsed), model };
   }
 
   /**
@@ -170,20 +212,15 @@ class AIExtractionService {
       {
         ...context,
         systemInstruction: PROMPTS.PO_EXTRACTION_SYSTEM_INSTRUCTION,
+        userPrompt: 'Perform anti-hallucination OCR extraction on this purchase order document. Return valid JSON matching the purchase order schema.',
       }
     );
 
-    const cleaned = jsonText
-      .replace(/^```json\s*/i, '')
-      .replace(/^```\s*/i, '')
-      .replace(/\s*```$/, '')
-      .trim();
-
     let parsed: any = {};
     try {
-      parsed = JSON.parse(cleaned);
+      parsed = cleanAndParseJson(jsonText);
     } catch (err: any) {
-      throw new Error(`Failed to parse AI PO extraction JSON: ${err?.message || 'Invalid JSON'}`);
+      throw new Error(`Failed to parse AI PO extraction JSON: ${err?.message || 'Invalid JSON format'}`);
     }
 
     const subtotal = extractNumber(parsed.subtotal);
@@ -194,10 +231,14 @@ class AIExtractionService {
       documentType: 'purchase_order',
       confidence: typeof parsed.confidence === 'number' ? parsed.confidence : 0.85,
       poNumber: extractString(parsed.poNumber),
-      supplierName: extractString(parsed.supplierName),
-      supplierGstin: extractString(parsed.supplierGstin),
-      supplierEmail: extractString(parsed.supplierEmail),
       poDate: extractString(parsed.poDate),
+      buyerName: extractString(parsed.buyerName) || extractString(parsed.companyName),
+      buyerGstin: extractString(parsed.buyerGstin) || extractString(parsed.buyerGSTIN),
+      supplierName: extractString(parsed.supplierName),
+      supplierGstin: extractString(parsed.supplierGstin) || extractString(parsed.supplierGSTIN),
+      supplierEmail: extractString(parsed.supplierEmail),
+      deliveryAddress: extractString(parsed.deliveryAddress) || extractString(parsed.shippingAddress),
+      paymentTerms: extractString(parsed.paymentTerms),
       expectedDeliveryDate: extractString(parsed.expectedDeliveryDate),
       currency: extractString(parsed.currency) || 'INR',
       subtotal,
@@ -205,6 +246,7 @@ class AIExtractionService {
       total,
       lineItems: Array.isArray(parsed.lineItems)
         ? parsed.lineItems.map((item: any) => ({
+            itemCode: extractString(item.itemCode) || extractString(item.sku) || extractString(item.code),
             description: String(extractString(item.description) || 'Item').trim(),
             quantity: extractNumber(item.quantity),
             unitPrice: extractNumber(item.unitPrice),
@@ -215,7 +257,7 @@ class AIExtractionService {
         : [],
     };
 
-    return { data, rawJson: cleaned, model };
+    return { data, rawJson: JSON.stringify(parsed), model };
   }
 
   /**
@@ -227,9 +269,12 @@ class AIExtractionService {
     context?: { companyId?: string; userId?: string }
   ): Promise<{ documentType: 'invoice' | 'purchase_order' | 'unknown'; confidence: number }> {
     try {
-      const { jsonText } = await aiService.extractDocumentMedia(fileBuffer, mimeType, context);
-      const cleaned = jsonText.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/\s*```$/, '').trim();
-      const parsed = JSON.parse(cleaned);
+      const { jsonText } = await aiService.extractDocumentMedia(fileBuffer, mimeType, {
+        ...context,
+        systemInstruction: PROMPTS.CLASSIFICATION_SYSTEM_INSTRUCTION,
+        userPrompt: 'Classify document as invoice, purchase_order, or unknown. Return valid JSON matching schema.',
+      });
+      const parsed = cleanAndParseJson(jsonText);
 
       const documentType = ['invoice', 'purchase_order', 'unknown'].includes(parsed.documentType)
         ? parsed.documentType

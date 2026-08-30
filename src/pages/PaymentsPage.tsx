@@ -99,7 +99,7 @@ export const PaymentsPage: React.FC = () => {
             <div className="py-12 text-center space-y-2">
               <Calendar className="w-8 h-8 text-slate-400 mx-auto" />
               <h3 className="text-sm font-bold text-slate-900">No payment records found</h3>
-              <p className="text-xs text-slate-500">Payment schedules are automatically populated when invoices are ingested into MongoDB.</p>
+              <p className="text-xs text-slate-500">Payment schedules are automatically populated when invoices are ingested into company records.</p>
             </div>
           ) : (
             <table className="w-full text-left text-xs">

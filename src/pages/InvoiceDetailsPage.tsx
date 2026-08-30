@@ -48,20 +48,20 @@ export const InvoiceDetailsPage: React.FC = () => {
     (i) => i.id === invoiceId || i.invoiceNumber.toLowerCase() === invoiceId?.toLowerCase()
   );
 
-  // Load already-generated AI results from MongoDB document without making any network AI call on page mount
+  // Load already-generated AI results from company records without making any network AI call on page mount
   useEffect(() => {
     if (invoice) {
       if (invoice.aiAnalysis && invoice.aiAnalysis.result) {
         setRiskAnalysis(invoice.aiAnalysis.result);
         setAnalysisMeta({
-          model: invoice.aiAnalysis.model || 'gemini-2.5-flash',
+          model: 'InvoiceFlow AI Engine',
           analyzedAt: invoice.aiAnalysis.analyzedAt,
           cached: true,
         });
       } else if (invoice.riskAnalysis) {
         setRiskAnalysis(invoice.riskAnalysis);
         setAnalysisMeta({
-          model: (invoice.riskAnalysis as any).model || 'gemini-2.5-flash',
+          model: 'InvoiceFlow AI Engine',
           analyzedAt: invoice.riskAnalysis.analyzedAt,
           cached: true,
         });
@@ -81,7 +81,7 @@ export const InvoiceDetailsPage: React.FC = () => {
       if (res && res.analysis) {
         setRiskAnalysis(res.analysis);
         setAnalysisMeta({
-          model: res.model || 'gemini-2.5-flash',
+          model: 'InvoiceFlow AI Engine',
           analyzedAt: res.analyzedAt || new Date().toISOString(),
           cached: res.cached ?? false,
         });
@@ -95,7 +95,7 @@ export const InvoiceDetailsPage: React.FC = () => {
       await refreshData();
     } catch (err: any) {
       console.error('Failed to analyze invoice risk:', err);
-      const errMsg = err?.message || 'Gemini risk analysis could not be completed.';
+      const errMsg = err?.message || 'AI risk analysis could not be completed. Please try again.';
       setAnalysisError(errMsg);
       showToast(errMsg, 'error');
     } finally {
@@ -138,7 +138,7 @@ export const InvoiceDetailsPage: React.FC = () => {
   };
 
   const formatAnalyzedTime = (isoString?: string) => {
-    if (!isoString) return 'Previously saved in MongoDB';
+    if (!isoString) return 'Previously saved in company records';
     try {
       const date = new Date(isoString);
       const diffMin = Math.round((Date.now() - date.getTime()) / 60000);
@@ -215,8 +215,8 @@ export const InvoiceDetailsPage: React.FC = () => {
                 <h3 className="text-sm font-bold text-slate-900">
                   AI Risk Analysis
                 </h3>
-                <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-brand-100/70 text-brand-800 uppercase tracking-wide">
-                  {analysisMeta?.model || 'Gemini 2.5 Flash'}
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-slate-100 text-slate-700 uppercase tracking-wide">
+                  AI Risk Engine
                 </span>
                 {analysisMeta?.cached && (
                   <span className="text-[10px] font-medium px-2 py-0.5 rounded bg-slate-100 text-slate-600 flex items-center gap-1">
@@ -269,7 +269,7 @@ export const InvoiceDetailsPage: React.FC = () => {
             <Loader2 className="w-7 h-7 text-brand-600 animate-spin" />
             <div className="space-y-1">
               <p className="text-xs font-semibold text-slate-900">
-                Gemini 2.5 Flash is executing AP risk analysis...
+                AI Risk Engine is executing AP risk analysis...
               </p>
               <p className="text-[11px] text-slate-500">
                 Reconciling line items, evaluating vendor historical signals, and calculating risk score
@@ -308,7 +308,7 @@ export const InvoiceDetailsPage: React.FC = () => {
             <div className="space-y-1 max-w-md mx-auto">
               <h4 className="text-xs font-bold text-slate-900">AI Risk Analysis on Demand</h4>
               <p className="text-[11px] text-slate-500 leading-relaxed">
-                Deterministic invoice checks are already verified below. Click below to run AI AP risk reasoning with Gemini 2.5 Flash.
+                Deterministic invoice checks are already verified below. Click below to run AI AP risk reasoning.
               </p>
             </div>
             <Button
@@ -425,7 +425,7 @@ export const InvoiceDetailsPage: React.FC = () => {
             {/* AI Executive Recommendation */}
             <div className="p-4 rounded-xl bg-brand-50/50 border border-brand-200/80 space-y-1.5">
               <span className="text-[11px] font-bold uppercase tracking-wider text-brand-800 flex items-center gap-1.5">
-                <Bot className="w-3.5 h-3.5 text-brand-600" /> Gemini Risk Recommendation
+                <Bot className="w-3.5 h-3.5 text-brand-600" /> AI Risk Recommendation
               </span>
               <p className="text-xs font-medium text-slate-800 leading-relaxed">
                 {riskAnalysis.recommendation}

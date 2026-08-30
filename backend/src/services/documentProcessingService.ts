@@ -93,16 +93,20 @@ class DocumentProcessingService {
       }
     );
 
+    let docType: string = (doc.documentType && doc.documentType !== 'unknown') ? doc.documentType : 'unknown';
+
     try {
       // 4. Determine Document Type
-      let docType = documentTypeService.detectTypeFromFilename(doc.originalFileName);
       if (docType === 'unknown') {
-        const aiClass = await aiExtractionService.classifyUnknownDocument(fileBuffer, doc.mimeType, {
-          companyId,
-          userId,
-        });
-        if (aiClass.documentType !== 'unknown') {
-          docType = aiClass.documentType;
+        docType = documentTypeService.detectTypeFromFilename(doc.originalFileName);
+        if (docType === 'unknown') {
+          const aiClass = await aiExtractionService.classifyUnknownDocument(fileBuffer, doc.mimeType, {
+            companyId,
+            userId,
+          });
+          if (aiClass.documentType !== 'unknown') {
+            docType = aiClass.documentType;
+          }
         }
       }
 
@@ -125,11 +129,12 @@ class DocumentProcessingService {
         validationResults = valRes.validationChecks;
 
         // Optional supplier association for PO
+        let poSupplierObj: any = null;
         try {
           const poSupName = (extractedPayload.supplierName || '').trim();
           const poSupGstin = (extractedPayload.supplierGstin || '').trim();
           if (poSupName) {
-            const existingSup = await SupplierModel.findOne({
+            poSupplierObj = await SupplierModel.findOne({
               companyId,
               $or: [
                 { name: new RegExp(`^${escapeRegExp(poSupName)}$`, 'i') },
@@ -137,8 +142,8 @@ class DocumentProcessingService {
               ],
             });
 
-            if (!existingSup) {
-              await SupplierModel.create({
+            if (!poSupplierObj) {
+              poSupplierObj = await SupplierModel.create({
                 id: `sup-${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 7)}`,
                 companyId,
                 name: poSupName,
@@ -164,12 +169,17 @@ class DocumentProcessingService {
 
         // Sync or Create PurchaseOrder record in MongoDB scoped to companyId
         const poNum = (extractedPayload.poNumber || `PO-${Date.now()}`).trim();
+        const poSupplierId = poSupplierObj?.id || `sup-${(extractedPayload.supplierName || 'custom').toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 10)}`;
+        const poRecordId = `po-${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 6)}`;
+
         const createdPO = await PurchaseOrderModel.findOneAndUpdate(
           { companyId, poNumber: new RegExp(`^${poNum.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') },
           {
+            $setOnInsert: { id: poRecordId },
             $set: {
               poNumber: poNum,
               companyId,
+              supplierId: poSupplierId,
               supplierName: extractedPayload.supplierName || 'Supplier',
               supplierGstin: extractedPayload.supplierGstin || '',
               totalAmount: extractedPayload.total || valRes.computedTotal || 0,
@@ -411,14 +421,20 @@ class DocumentProcessingService {
 
       return finalDoc || doc;
     } catch (err: any) {
-      console.error(`❌ Document processing error for ${documentId}:`, err);
+      const failureReason = err?.message || String(err);
+      console.error(`❌ [DocumentExtractionFailed] Document ID: "${documentId}" | Type: "${docType || doc.documentType || 'unknown'}"`);
+      console.error(`   Primary Provider Attempted: Google Gemini (gemini-3.6-flash / gemini-2.5-flash)`);
+      console.error(`   Fallback Provider Attempted: Groq (qwen/qwen3.6-27b)`);
+      console.error(`   Failure Reason / Error: ${failureReason}`);
+
       const failedDoc = await DocumentModel.findOneAndUpdate(
         { id: documentId, companyId },
         {
           $set: {
+            documentType: docType || doc.documentType || 'unknown',
             processingStatus: 'failed',
             extractionStatus: 'failed',
-            extractionError: err?.message || 'AI document processing failed.',
+            extractionError: failureReason,
           },
         },
         { returnDocument: 'after' }

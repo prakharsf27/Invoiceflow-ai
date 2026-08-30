@@ -102,7 +102,7 @@ export const CopilotPage: React.FC = () => {
               </p>
             </div>
           </div>
-          <Badge variant="purple" size="sm">Gemini 2.5 Flash</Badge>
+          <Badge variant="purple" size="sm">InvoiceFlow AI</Badge>
         </div>
 
         {/* Message Stream */}
@@ -273,7 +273,7 @@ export const CopilotPage: React.FC = () => {
             <span>Company Data Isolation</span>
           </div>
           <p className="text-[11px] text-slate-500 leading-relaxed">
-            Copilot only accesses MongoDB records for your organization (<span className="font-mono text-slate-700 font-semibold">{user?.companyName}</span>).
+            Copilot only accesses records belonging to your organization (<span className="font-mono text-slate-700 font-semibold">{user?.companyName}</span>).
           </p>
         </Card>
       </div>
