@@ -1,14 +1,17 @@
 import React, { useState } from 'react';
-import { useNavigate, useLocation, Link } from 'react-router-dom';
+import { useNavigate, useLocation, useSearchParams, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useApp } from '../context/AppContext';
-import { ArrowRight, AlertCircle, Loader2, Zap, Eye, EyeOff, Lock, Mail } from 'lucide-react';
+import { ArrowRight, AlertCircle, Loader2, Zap, Eye, EyeOff, Lock, Mail, Users } from 'lucide-react';
 
 export const LoginPage: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
+  const [searchParams] = useSearchParams();
   const { login } = useAuth();
   const { refreshData } = useApp();
+
+  const inviteToken = searchParams.get('invite') || searchParams.get('token') || undefined;
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -16,7 +19,7 @@ export const LoginPage: React.FC = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  const from = (location.state as any)?.from?.pathname || '/app/dashboard';
+  const from = (location.state as any)?.from?.pathname || (inviteToken ? `/invite/${inviteToken}` : '/app/dashboard');
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -30,7 +33,11 @@ export const LoginPage: React.FC = () => {
 
     try {
       await login(email.trim().toLowerCase(), password);
-      navigate(from, { replace: true });
+      if (inviteToken) {
+        navigate(`/invite/${inviteToken}`, { replace: true });
+      } else {
+        navigate(from, { replace: true });
+      }
       refreshData().catch(() => {});
     } catch (err: any) {
       console.error('Login error:', err);
@@ -48,7 +55,11 @@ export const LoginPage: React.FC = () => {
 
     try {
       await login('demo@invoiceflow.ai', 'password123');
-      navigate(from, { replace: true });
+      if (inviteToken) {
+        navigate(`/invite/${inviteToken}`, { replace: true });
+      } else {
+        navigate(from, { replace: true });
+      }
       refreshData().catch(() => {});
     } catch (err: any) {
       console.error('Demo login error:', err);
@@ -83,6 +94,18 @@ export const LoginPage: React.FC = () => {
       {/* Login Form Card */}
       <div className="mt-7 sm:mx-auto sm:w-full sm:max-w-md px-4">
         <div className="bg-white border border-slate-200/90 rounded-2xl p-7 sm:p-8 shadow-card space-y-5">
+          {inviteToken && (
+            <div className="p-3.5 rounded-xl bg-blue-50 border border-blue-200 text-blue-900 text-xs flex items-start gap-2.5">
+              <Users className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
+              <div>
+                <span className="font-bold block">Workspace Invitation Detected</span>
+                <span className="text-[11px] text-blue-800">
+                  Sign in with your invited email account to automatically join the company workspace.
+                </span>
+              </div>
+            </div>
+          )}
+
           {errorMsg && (
             <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs flex items-start gap-2.5">
               <AlertCircle className="w-4 h-4 text-rose-500 shrink-0 mt-0.5" />
@@ -99,11 +122,11 @@ export const LoginPage: React.FC = () => {
                 <Mail className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
                 <input
                   type="email"
+                  required
+                  placeholder="name@company.com"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  placeholder="name@company.com"
-                  required
-                  className="w-full pl-9 pr-3.5 py-2 text-xs bg-slate-50 border border-slate-200 rounded-lg text-slate-900 placeholder:text-slate-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-slate-900/20 focus:border-slate-900 transition-all"
+                  className="w-full pl-9 pr-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-slate-900 focus:bg-white transition-all text-slate-900"
                 />
               </div>
             </div>
@@ -118,11 +141,11 @@ export const LoginPage: React.FC = () => {
                 <Lock className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
                 <input
                   type={showPassword ? 'text' : 'password'}
+                  required
+                  placeholder="••••••••"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  placeholder="••••••••"
-                  required
-                  className="w-full pl-9 pr-10 py-2 text-xs bg-slate-50 border border-slate-200 rounded-lg text-slate-900 placeholder:text-slate-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-slate-900/20 focus:border-slate-900 transition-all"
+                  className="w-full pl-9 pr-10 py-2 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-slate-900 focus:bg-white transition-all text-slate-900"
                 />
                 <button
                   type="button"
@@ -137,7 +160,7 @@ export const LoginPage: React.FC = () => {
             <button
               type="submit"
               disabled={isLoading}
-              className="w-full justify-center gap-2 bg-slate-900 hover:bg-slate-800 text-white font-semibold rounded-lg py-2.5 text-xs shadow-xs transition-all cursor-pointer flex items-center mt-2 disabled:opacity-70"
+              className="w-full py-2.5 px-4 bg-slate-900 hover:bg-slate-800 text-white font-semibold text-xs rounded-lg shadow-xs transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-[0.99] disabled:opacity-50"
             >
               {isLoading ? (
                 <>
@@ -146,7 +169,7 @@ export const LoginPage: React.FC = () => {
                 </>
               ) : (
                 <>
-                  <span>Sign In</span>
+                  <span>Sign In to Workspace</span>
                   <ArrowRight className="w-4 h-4" />
                 </>
               )}
@@ -154,33 +177,36 @@ export const LoginPage: React.FC = () => {
           </form>
 
           {/* Quick Demo Access Divider */}
-          <div className="relative flex py-1 items-center">
-            <div className="grow border-t border-slate-200" />
-            <span className="shrink mx-3 text-[10px] font-bold tracking-wider text-slate-400 uppercase">
-              or quick demo
-            </span>
-            <div className="grow border-t border-slate-200" />
+          <div className="relative">
+            <div className="absolute inset-0 flex items-center">
+              <div className="w-full border-t border-slate-200" />
+            </div>
+            <div className="relative flex justify-center text-xs">
+              <span className="px-2.5 bg-white text-slate-400 font-medium">or instant evaluation</span>
+            </div>
           </div>
 
           <button
             type="button"
             onClick={handleDemoLogin}
             disabled={isLoading}
-            className="w-full justify-center gap-2 border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-800 font-semibold rounded-lg py-2.5 text-xs shadow-xs transition-all cursor-pointer flex items-center"
+            className="w-full py-2.5 px-4 bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-700 font-semibold text-xs rounded-lg transition-colors flex items-center justify-center gap-2 cursor-pointer active:scale-[0.99]"
           >
-            <Zap className="w-4 h-4 text-amber-500 fill-amber-500" />
-            <span>Sign In with Demo Account (Instant)</span>
+            <Zap className="w-3.5 h-3.5 text-amber-500" />
+            <span>Sign In with 1-Click Demo Account</span>
           </button>
-
-          <div className="text-center pt-2 border-t border-slate-100">
-            <p className="text-xs text-slate-500">
-              Don't have an organization account?{' '}
-              <Link to="/register" className="font-semibold text-slate-900 hover:underline transition-colors">
-                Create workspace
-              </Link>
-            </p>
-          </div>
         </div>
+
+        {/* Footer info */}
+        <p className="mt-6 text-center text-xs text-slate-500">
+          Don't have an organization account?{' '}
+          <Link
+            to={inviteToken ? `/register?invite=${inviteToken}` : '/register'}
+            className="font-semibold text-slate-900 hover:underline"
+          >
+            {inviteToken ? 'Create account to accept invite' : 'Create workspace'}
+          </Link>
+        </p>
       </div>
     </div>
   );

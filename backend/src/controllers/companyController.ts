@@ -8,7 +8,7 @@ import { InvitationModel } from '../models/Invitation.js';
 import { isOwnerRole, getJwtSecret } from '../middleware/auth.js';
 
 /**
- * Helper to ensure a Company record exists in MongoDB for any active companyId.
+ * Helper to ensure a Company record exists in database for any active companyId.
  */
 export const getOrCreateCompany = async (
   companyId: string,
@@ -73,7 +73,7 @@ export const getCompanyProfile = async (req: Request, res: Response): Promise<vo
 
 /**
  * PUT /api/company/profile
- * Update company workspace profile and policies (Restricted to OWNER).
+ * Update company workspace profile and settings (Restricted to OWNER).
  */
 export const updateCompanyProfile = async (req: Request, res: Response): Promise<void> => {
   try {
@@ -85,49 +85,49 @@ export const updateCompanyProfile = async (req: Request, res: Response): Promise
 
     const { name, gstin, email, phone, address, city, state, pincode, settings } = req.body;
 
-    const updates: any = {};
-    if (name && typeof name === 'string' && name.trim() !== '') {
-      updates.name = name.trim();
+    const company = await getOrCreateCompany(companyId, req.user?.companyName, req.user?.userId);
+
+    if (name && typeof name === 'string' && name.trim()) {
+      company.name = name.trim();
+      // Update company name on all active users
+      await UserModel.updateMany({ companyId }, { $set: { companyName: company.name } });
     }
-    if (gstin !== undefined) updates.gstin = String(gstin).trim().toUpperCase();
-    if (email !== undefined) updates.email = String(email).trim().toLowerCase();
-    if (phone !== undefined) updates.phone = String(phone).trim();
-    if (address !== undefined) updates.address = String(address).trim();
-    if (city !== undefined) updates.city = String(city).trim();
-    if (state !== undefined) updates.state = String(state).trim();
-    if (pincode !== undefined) updates.pincode = String(pincode).trim();
+    if (gstin !== undefined) company.gstin = String(gstin).trim();
+    if (email !== undefined) company.email = String(email).trim().toLowerCase();
+    if (phone !== undefined) company.phone = String(phone).trim();
+    if (address !== undefined) company.address = String(address).trim();
+    if (city !== undefined) company.city = String(city).trim();
+    if (state !== undefined) company.state = String(state).trim();
+    if (pincode !== undefined) company.pincode = String(pincode).trim();
 
     if (settings && typeof settings === 'object') {
-      updates.settings = {
-        autoClearanceThreshold: typeof settings.autoClearanceThreshold === 'number'
-          ? settings.autoClearanceThreshold
-          : 500000,
+      company.settings = {
+        autoClearanceThreshold: Number(settings.autoClearanceThreshold) || 500000,
         riskTolerance: ['low', 'medium', 'high'].includes(settings.riskTolerance)
           ? settings.riskTolerance
           : 'medium',
-        requirePoMatch: typeof settings.requirePoMatch === 'boolean'
-          ? settings.requirePoMatch
-          : true,
-        currency: settings.currency || 'INR',
-        defaultPaymentTerms: settings.defaultPaymentTerms || 'Net 30',
+        requirePoMatch: Boolean(settings.requirePoMatch),
       };
     }
 
-    const updatedCompany = await CompanyModel.findOneAndUpdate(
-      { id: companyId },
-      { $set: updates },
-      { new: true, upsert: true }
-    );
-
-    // If company name changed, sync to user models in background
-    if (updates.name) {
-      await UserModel.updateMany({ companyId }, { $set: { companyName: updates.name } });
-    }
+    await company.save();
 
     res.json({
       success: true,
-      message: 'Company profile updated successfully.',
-      data: updatedCompany,
+      message: 'Company profile and rules updated successfully.',
+      data: {
+        id: company.id,
+        name: company.name,
+        gstin: company.gstin,
+        email: company.email,
+        phone: company.phone,
+        address: company.address,
+        city: company.city,
+        state: company.state,
+        pincode: company.pincode,
+        settings: company.settings,
+        isOwner: true,
+      },
     });
   } catch (error: any) {
     console.error('❌ Error updating company profile:', error);
@@ -137,7 +137,7 @@ export const updateCompanyProfile = async (req: Request, res: Response): Promise
 
 /**
  * GET /api/company/team
- * List all team members in the company workspace and pending invitations (if Owner).
+ * Get all members and pending invitations for the authenticated company.
  */
 export const getTeamMembers = async (req: Request, res: Response): Promise<void> => {
   try {
@@ -162,6 +162,8 @@ export const getTeamMembers = async (req: Request, res: Response): Promise<void>
       }).sort({ createdAt: -1 });
     }
 
+    const frontendUrl = (process.env.FRONTEND_URL || 'http://localhost:5173').replace(/\/$/, '');
+
     res.json({
       success: true,
       data: {
@@ -180,6 +182,7 @@ export const getTeamMembers = async (req: Request, res: Response): Promise<void>
           role: inv.role,
           invitedByName: inv.invitedByName,
           token: inv.token,
+          invitationLink: `${frontendUrl}/invite/${inv.token}`,
           createdAt: inv.createdAt,
           expiresAt: inv.expiresAt,
         })),
@@ -229,8 +232,8 @@ export const inviteTeamMember = async (req: Request, res: Response): Promise<voi
 
     const company = await getOrCreateCompany(companyId, req.user?.companyName, req.user?.userId);
 
-    // Create or update invitation
-    const token = crypto.randomBytes(24).toString('hex');
+    // Create cryptographically secure token & 7-day expiration
+    const token = crypto.randomBytes(32).toString('hex');
     const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days
 
     const invitation = await InvitationModel.findOneAndUpdate(
@@ -252,17 +255,10 @@ export const inviteTeamMember = async (req: Request, res: Response): Promise<voi
       { upsert: true, returnDocument: 'after' }
     );
 
-    // If an account with this email already exists and is not active elsewhere, optionally link them directly
-    const existingGlobalUser = await UserModel.findOne({ email: cleanEmail });
-    if (existingGlobalUser && !existingGlobalUser.isActive) {
-      existingGlobalUser.companyId = companyId;
-      existingGlobalUser.companyName = company.name;
-      existingGlobalUser.role = assignedRole;
-      existingGlobalUser.isActive = true;
-      await existingGlobalUser.save();
-    }
+    const frontendUrl = (process.env.FRONTEND_URL || 'http://localhost:5173').replace(/\/$/, '');
+    const invitationLink = `${frontendUrl}/invite/${invitation.token}`;
 
-    console.log(`✉️ [Team] Created invitation for "${cleanEmail}" to join "${company.name}" as ${assignedRole}`);
+    console.log(`✉️ [Team] Created shareable invitation for "${cleanEmail}" (${invitationLink})`);
 
     res.status(201).json({
       success: true,
@@ -272,13 +268,118 @@ export const inviteTeamMember = async (req: Request, res: Response): Promise<voi
         email: invitation.email,
         role: invitation.role,
         token: invitation.token,
-        invitationLink: `/register?token=${invitation.token}&email=${encodeURIComponent(cleanEmail)}`,
+        companyName: company.name,
+        invitationLink,
         expiresAt: invitation.expiresAt,
       },
     });
   } catch (error: any) {
     console.error('❌ Error inviting team member:', error);
     res.status(500).json({ success: false, error: error?.message || 'Failed to create team invitation' });
+  }
+};
+
+/**
+ * GET /api/company/team/invitation-info/:token
+ * Public endpoint to retrieve invitation metadata for /invite/:token page.
+ */
+export const getInvitationInfo = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { token } = req.params;
+    if (!token) {
+      res.status(400).json({ success: false, error: 'Invitation token is required.' });
+      return;
+    }
+
+    const invitation = await InvitationModel.findOne({ token });
+    if (!invitation) {
+      res.status(404).json({
+        success: false,
+        error: 'This invitation is invalid or does not exist.',
+        status: 'not_found',
+      });
+      return;
+    }
+
+    if (invitation.status === 'revoked') {
+      res.status(400).json({
+        success: false,
+        error: 'This invitation is no longer available.',
+        status: 'revoked',
+        companyName: invitation.companyName,
+      });
+      return;
+    }
+
+    if (invitation.status === 'accepted') {
+      res.status(400).json({
+        success: false,
+        error: 'This invitation has already been accepted.',
+        status: 'accepted',
+        companyName: invitation.companyName,
+      });
+      return;
+    }
+
+    if (new Date() > invitation.expiresAt || invitation.status === 'expired') {
+      res.status(400).json({
+        success: false,
+        error: 'Invitation expired. Ask the workspace owner to generate a new invitation.',
+        status: 'expired',
+        companyName: invitation.companyName,
+      });
+      return;
+    }
+
+    res.json({
+      success: true,
+      data: {
+        id: invitation.id,
+        companyId: invitation.companyId,
+        companyName: invitation.companyName,
+        email: invitation.email,
+        role: invitation.role,
+        invitedByName: invitation.invitedByName,
+        expiresAt: invitation.expiresAt,
+        status: 'pending',
+      },
+    });
+  } catch (error: any) {
+    console.error('❌ Error retrieving invitation info:', error);
+    res.status(500).json({ success: false, error: 'Failed to retrieve invitation information' });
+  }
+};
+
+/**
+ * DELETE /api/company/team/invitations/:invitationId
+ * Revoke a pending invitation (Restricted to OWNER).
+ */
+export const revokeInvitation = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const companyId = req.user?.companyId;
+    const { invitationId } = req.params;
+
+    if (!companyId) {
+      res.status(401).json({ success: false, error: 'Authentication required' });
+      return;
+    }
+
+    const invitation = await InvitationModel.findOne({ id: invitationId, companyId });
+    if (!invitation) {
+      res.status(404).json({ success: false, error: 'Invitation not found.' });
+      return;
+    }
+
+    invitation.status = 'revoked';
+    await invitation.save();
+
+    res.json({
+      success: true,
+      message: `Invitation for ${invitation.email} has been revoked.`,
+    });
+  } catch (error: any) {
+    console.error('❌ Error revoking invitation:', error);
+    res.status(500).json({ success: false, error: 'Failed to revoke invitation' });
   }
 };
 
@@ -332,7 +433,10 @@ export const removeTeamMember = async (req: Request, res: Response): Promise<voi
       }
     }
 
-    // Deactivate member access
+    // Remove user's membership from company without deleting account
+    targetUser.companyId = `company-archived-${Date.now().toString(36)}`;
+    targetUser.companyName = 'Inactive Workspace';
+    targetUser.role = 'member';
     targetUser.isActive = false;
     await targetUser.save();
 
@@ -344,7 +448,7 @@ export const removeTeamMember = async (req: Request, res: Response): Promise<voi
 
     res.json({
       success: true,
-      message: `Team member "${targetUser.name}" has been removed from the organization.`,
+      message: `Team member "${targetUser.name}" has been removed from the organization workspace.`,
     });
   } catch (error: any) {
     console.error('❌ Error removing team member:', error);
@@ -410,21 +514,62 @@ export const acceptInvitation = async (req: Request, res: Response): Promise<voi
       return;
     }
 
-    const invitation = await InvitationModel.findOne({
-      token,
-      status: 'pending',
-      expiresAt: { $gt: new Date() },
-    });
+    const invitation = await InvitationModel.findOne({ token });
 
     if (!invitation) {
-      res.status(400).json({
+      res.status(404).json({
         success: false,
-        error: 'Invitation is invalid, expired, or has already been accepted.',
+        error: 'This invitation is invalid or does not exist.',
       });
       return;
     }
 
-    let user = await UserModel.findOne({ email: invitation.email });
+    if (invitation.status === 'revoked') {
+      res.status(400).json({
+        success: false,
+        error: 'This invitation is no longer available.',
+      });
+      return;
+    }
+
+    if (invitation.status === 'accepted') {
+      res.status(400).json({
+        success: false,
+        error: 'This invitation has already been accepted.',
+      });
+      return;
+    }
+
+    if (new Date() > invitation.expiresAt || invitation.status === 'expired') {
+      res.status(400).json({
+        success: false,
+        error: 'Invitation expired. Ask the workspace owner to generate a new invitation.',
+      });
+      return;
+    }
+
+    // Check if caller is authenticated with JWT
+    let callingUserEmail: string | null = null;
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      try {
+        const decoded: any = jwt.verify(authHeader.split(' ')[1], getJwtSecret());
+        callingUserEmail = decoded.email?.toLowerCase().trim();
+      } catch {
+        // Token expired/invalid, proceed to body password flow
+      }
+    }
+
+    // If caller is authenticated, verify email matches invited email
+    if (callingUserEmail && callingUserEmail !== invitation.email.toLowerCase()) {
+      res.status(400).json({
+        success: false,
+        error: `This invitation was created for ${invitation.email}. You are currently signed in as ${callingUserEmail}. Please sign in with the invited email account.`,
+      });
+      return;
+    }
+
+    let user = await UserModel.findOne({ email: invitation.email.toLowerCase() });
     const saltRounds = 10;
 
     if (user) {
@@ -441,7 +586,7 @@ export const acceptInvitation = async (req: Request, res: Response): Promise<voi
       await user.save();
     } else {
       if (!password || password.length < 6) {
-        res.status(400).json({ success: false, error: 'Password of at least 6 characters is required.' });
+        res.status(400).json({ success: false, error: 'Password of at least 6 characters is required to create your account.' });
         return;
       }
       const userId = `usr-${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 6)}`;
@@ -450,7 +595,7 @@ export const acceptInvitation = async (req: Request, res: Response): Promise<voi
       user = await UserModel.create({
         id: userId,
         name: name?.trim() || invitation.email.split('@')[0],
-        email: invitation.email,
+        email: invitation.email.toLowerCase(),
         passwordHash,
         role: invitation.role,
         companyId: invitation.companyId,
@@ -468,7 +613,7 @@ export const acceptInvitation = async (req: Request, res: Response): Promise<voi
     const membersCount = await UserModel.countDocuments({ companyId: invitation.companyId, isActive: true });
     await CompanyModel.updateOne({ id: invitation.companyId }, { $set: { membersCount } });
 
-    // Generate JWT token
+    // Generate fresh JWT token
     const userPayload = {
       id: user.id,
       name: user.name,
@@ -491,6 +636,8 @@ export const acceptInvitation = async (req: Request, res: Response): Promise<voi
       getJwtSecret(),
       { expiresIn: '7d' }
     );
+
+    console.log(`🎉 [Team] User "${user.email}" successfully accepted invitation to join "${invitation.companyName}" as ${invitation.role}`);
 
     res.json({
       success: true,

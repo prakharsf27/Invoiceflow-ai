@@ -134,12 +134,28 @@ export const SettingsPage: React.FC = () => {
     }
   };
 
-  const handleCopyLink = (token: string, inviteEmail: string) => {
-    const fullLink = `${window.location.origin}/register?token=${token}&email=${encodeURIComponent(inviteEmail)}`;
+  const handleCopyLink = (token: string) => {
+    const fullLink = `${window.location.origin}/invite/${token}`;
     navigator.clipboard.writeText(fullLink);
     setCopiedToken(token);
-    showToast('Invitation link copied to clipboard!', 'info');
+    showToast('Invitation link copied to clipboard!', 'success');
     setTimeout(() => setCopiedToken(null), 2500);
+  };
+
+  const handleRevokeInvitation = async (invitationId: string) => {
+    try {
+      await companyService.revokeInvitation(invitationId);
+      showToast('Invitation has been revoked.', 'info');
+      fetchTeamData();
+    } catch (err: any) {
+      showToast(err?.message || 'Failed to revoke invitation.', 'error');
+    }
+  };
+
+  const getDaysUntilExpiry = (expiresAt: string) => {
+    const diffMs = new Date(expiresAt).getTime() - Date.now();
+    const days = Math.max(1, Math.ceil(diffMs / (1000 * 60 * 60 * 24)));
+    return `Expires in ${days} day${days > 1 ? 's' : ''}`;
   };
 
   return (
@@ -454,51 +470,68 @@ export const SettingsPage: React.FC = () => {
 
             {/* Pending Invitations Section (Owners only) */}
             {isOwner && invitations.length > 0 && (
-              <div className="space-y-3 pt-3 border-t border-slate-100">
-                <div className="flex items-center gap-2">
-                  <Clock className="w-4 h-4 text-amber-600" />
-                  <h4 className="text-xs font-bold text-slate-900">Pending Team Invitations ({invitations.length})</h4>
+              <div className="space-y-3 pt-4 border-t border-slate-100">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Clock className="w-4 h-4 text-amber-600" />
+                    <h4 className="text-xs font-bold text-slate-900">Pending Invitations ({invitations.length})</h4>
+                  </div>
+                  <span className="text-[11px] text-slate-500">
+                    Shareable links expire automatically after 7 days
+                  </span>
                 </div>
 
-                <div className="border border-amber-200 bg-amber-50/30 rounded-xl overflow-hidden">
+                <div className="border border-slate-200 rounded-xl overflow-hidden shadow-2xs">
                   <table className="w-full text-left text-xs">
-                    <thead className="bg-amber-50 border-b border-amber-200 text-amber-900 font-semibold">
+                    <thead className="bg-slate-50/80 border-b border-slate-200 text-slate-500 font-semibold">
                       <tr>
                         <th className="py-2.5 px-4">Invited Email</th>
                         <th className="py-2.5 px-4">Assigned Role</th>
-                        <th className="py-2.5 px-4">Invited By</th>
-                        <th className="py-2.5 px-4 text-right">Invitation Link</th>
+                        <th className="py-2.5 px-4">Expires</th>
+                        <th className="py-2.5 px-4 text-right">Actions</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-amber-100 text-slate-700">
+                    <tbody className="divide-y divide-slate-100 text-slate-700 bg-white">
                       {invitations.map((inv) => (
-                        <tr key={inv.id}>
-                          <td className="py-2.5 px-4 font-mono font-medium text-slate-900">
+                        <tr key={inv.id} className="hover:bg-slate-50/60 transition-colors">
+                          <td className="py-3 px-4 font-mono font-medium text-slate-900">
                             {inv.email}
                           </td>
-                          <td className="py-2.5 px-4 capitalize font-semibold text-slate-800">
-                            {inv.role}
+                          <td className="py-3 px-4 capitalize">
+                            <Badge variant="purple" size="sm">
+                              {inv.role}
+                            </Badge>
                           </td>
-                          <td className="py-2.5 px-4 text-slate-600">
-                            {inv.invitedByName}
+                          <td className="py-3 px-4 text-slate-500 text-[11px]">
+                            {getDaysUntilExpiry(inv.expiresAt)}
                           </td>
-                          <td className="py-2.5 px-4 text-right">
-                            <button
-                              onClick={() => handleCopyLink(inv.token, inv.email)}
-                              className="inline-flex items-center gap-1 px-2.5 py-1 bg-white border border-amber-300 hover:bg-amber-100 text-amber-900 rounded-md text-[11px] font-semibold transition-colors cursor-pointer"
-                            >
-                              {copiedToken === inv.token ? (
-                                <>
-                                  <Check className="w-3 h-3 text-emerald-600" />
-                                  <span>Copied!</span>
-                                </>
-                              ) : (
-                                <>
-                                  <Copy className="w-3 h-3" />
-                                  <span>Copy Link</span>
-                                </>
-                              )}
-                            </button>
+                          <td className="py-3 px-4 text-right">
+                            <div className="flex items-center justify-end gap-2">
+                              <button
+                                onClick={() => handleCopyLink(inv.token)}
+                                className="inline-flex items-center gap-1 px-2.5 py-1 bg-slate-50 border border-slate-200 hover:bg-slate-100 text-slate-700 rounded-md text-[11px] font-semibold transition-colors cursor-pointer"
+                              >
+                                {copiedToken === inv.token ? (
+                                  <>
+                                    <Check className="w-3 h-3 text-emerald-600" />
+                                    <span className="text-emerald-700">Copied</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <Copy className="w-3 h-3" />
+                                    <span>Copy Link</span>
+                                  </>
+                                )}
+                              </button>
+                              <button
+                                onClick={() => handleRevokeInvitation(inv.id)}
+                                className="inline-flex items-center gap-1 px-2 py-1 text-rose-600 hover:bg-rose-50 rounded-md text-[11px] font-medium transition-colors cursor-pointer"
+                                title="Revoke invitation"
+                              >
+                                <Trash2 className="w-3 h-3" />
+                                <span>Revoke</span>
+                              </button>
+                            </div>
                           </td>
                         </tr>
                       ))}

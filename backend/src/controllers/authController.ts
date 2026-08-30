@@ -96,6 +96,14 @@ export const register = async (req: Request, res: Response): Promise<void> => {
         return;
       }
 
+      if (invitation.email.toLowerCase() !== cleanEmail) {
+        res.status(400).json({
+          success: false,
+          error: `This invitation was created for ${invitation.email}. Please register with ${invitation.email}.`,
+        });
+        return;
+      }
+
       companyId = invitation.companyId;
       cleanCompanyName = invitation.companyName;
       userRole = invitation.role || 'member';

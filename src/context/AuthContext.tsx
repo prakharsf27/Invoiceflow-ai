@@ -28,6 +28,7 @@ interface AuthContextType {
     invitationToken?: string
   ) => Promise<AuthUser>;
   updateUserCompany: (companyName: string) => void;
+  loginWithToken: (token: string, user: AuthUser) => void;
   logout: () => Promise<void>;
 }
 
@@ -125,6 +126,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
+  const loginWithToken = (newToken: string, newUser: AuthUser) => {
+    localStorage.setItem('invoiceflow_token', newToken);
+    setToken(newToken);
+    setUser(newUser);
+  };
+
   const logout = async (): Promise<void> => {
     try {
       await fetchApi('/auth/logout', { method: 'POST' }).catch(() => {});
@@ -148,6 +155,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         login,
         register,
         updateUserCompany,
+        loginWithToken,
         logout,
       }}
     >

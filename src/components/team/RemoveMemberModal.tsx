@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { AlertTriangle, X, Loader2 } from 'lucide-react';
+import { AlertTriangle, X, Loader2, UserMinus } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { companyService } from '../../services/companyService';
 import type { TeamMember } from '../../types';
@@ -44,28 +44,36 @@ export const RemoveMemberModal: React.FC<RemoveMemberModalProps> = ({
         onClick={(e) => e.stopPropagation()}
       >
         <div className="p-6 text-center space-y-4">
-          <div className="w-12 h-12 rounded-full bg-rose-100 text-rose-600 flex items-center justify-center mx-auto">
-            <AlertTriangle className="w-6 h-6" />
+          <div className="w-12 h-12 rounded-2xl bg-rose-50 border border-rose-200 text-rose-600 flex items-center justify-center mx-auto">
+            <UserMinus className="w-6 h-6" />
           </div>
 
-          <div className="space-y-1">
-            <h3 className="text-base font-bold text-slate-900">Remove Team Member</h3>
-            <p className="text-xs text-slate-500">
-              Are you sure you want to remove <strong>{member.name}</strong> ({member.email}) from your company workspace?
+          <div className="space-y-1.5">
+            <h3 className="text-base font-bold text-slate-900">Remove team member?</h3>
+            <p className="text-xs text-slate-600 leading-relaxed">
+              This will remove <strong className="text-slate-900">{member.name}</strong> (<span className="font-mono">{member.email}</span>) from your company workspace. Their account will not be deleted.
             </p>
           </div>
 
-          <div className="p-3 bg-slate-50 rounded-xl text-left text-xs text-slate-600 space-y-1">
-            <p>• They will immediately lose access to all company invoices, POs, and reports.</p>
-            <p>• Existing invoices processed by them will remain intact.</p>
+          <div className="p-3 bg-slate-50 border border-slate-200/80 rounded-xl text-left text-xs text-slate-600 space-y-1 leading-relaxed">
+            <p className="flex items-center gap-1.5 text-slate-700">
+              <span className="w-1.5 h-1.5 rounded-full bg-slate-400" />
+              <span>Loses access to shared company invoices, POs, and reports.</span>
+            </p>
+            <p className="flex items-center gap-1.5 text-slate-700">
+              <span className="w-1.5 h-1.5 rounded-full bg-slate-400" />
+              <span>Previously processed company records remain intact.</span>
+            </p>
           </div>
 
           {errorMsg && (
-            <p className="text-xs text-rose-600 font-semibold">{errorMsg}</p>
+            <div className="p-2.5 bg-rose-50 border border-rose-200 rounded-lg text-xs text-rose-700 font-semibold">
+              {errorMsg}
+            </div>
           )}
 
-          <div className="flex items-center justify-center gap-2 pt-2">
-            <Button variant="outline" size="sm" onClick={onClose} disabled={isLoading}>
+          <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-slate-100">
+            <Button variant="outline" size="sm" onClick={onClose} disabled={isLoading} className="cursor-pointer">
               Cancel
             </Button>
             <Button
@@ -73,7 +81,7 @@ export const RemoveMemberModal: React.FC<RemoveMemberModalProps> = ({
               size="sm"
               onClick={handleConfirm}
               disabled={isLoading}
-              className="gap-1.5 cursor-pointer"
+              className="gap-1.5 cursor-pointer bg-rose-600 hover:bg-rose-700 text-white"
             >
               {isLoading && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
               <span>Remove Member</span>
