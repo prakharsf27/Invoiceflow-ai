@@ -4,6 +4,7 @@ export interface ApiResponse<T> {
   data: T;
   success: boolean;
   message?: string;
+  error?: string;
 }
 
 export const getAuthToken = (): string | null => {
@@ -15,7 +16,8 @@ export const getAuthToken = (): string | null => {
 };
 
 export const fetchApi = async <T>(endpoint: string, options?: RequestInit): Promise<T> => {
-  const url = `${API_BASE_URL}${endpoint.startsWith('/') ? endpoint : `/${endpoint}`}`;
+  const cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
+  const url = `${API_BASE_URL}${cleanEndpoint}`;
   const token = getAuthToken();
 
   const headers: Record<string, string> = {
@@ -27,24 +29,55 @@ export const fetchApi = async <T>(endpoint: string, options?: RequestInit): Prom
     headers['Authorization'] = `Bearer ${token}`;
   }
 
-  const response = await fetch(url, {
-    ...options,
-    headers,
-  });
+  try {
+    const response = await fetch(url, {
+      ...options,
+      headers,
+    });
 
-  if (!response.ok) {
-    let errorJson: any = null;
-    try {
-      errorJson = await response.json();
-    } catch {
-      // ignore
+    if (!response.ok) {
+      let errorJson: any = null;
+      try {
+        errorJson = await response.json();
+      } catch {
+        // ignore JSON parse error
+      }
+
+      // Handle 401 session expiration cleanly
+      if (response.status === 401 && !cleanEndpoint.startsWith('/auth/login') && !cleanEndpoint.startsWith('/auth/register')) {
+        try {
+          localStorage.removeItem('invoiceflow_token');
+          window.dispatchEvent(new CustomEvent('invoiceflow:unauthorized'));
+        } catch {
+          // ignore
+        }
+      }
+
+      const errorMsg =
+        errorJson?.error ||
+        errorJson?.message ||
+        (response.status === 401
+          ? 'Your session has expired. Please sign in again.'
+          : response.status === 403
+          ? 'Access denied. You do not have permission to perform this action.'
+          : response.status === 404
+          ? 'The requested resource was not found.'
+          : response.status >= 500
+          ? 'Server error occurred. Please try again in a few moments.'
+          : `Request failed with status ${response.status}`);
+
+      throw new Error(errorMsg);
     }
-    const errorMsg = errorJson?.error || errorJson?.message || `HTTP error! status: ${response.status}`;
-    throw new Error(errorMsg);
-  }
 
-  const json: any = await response.json();
-  return json.data !== undefined ? json.data : json;
+    const json: any = await response.json();
+    return json.data !== undefined ? json.data : json;
+  } catch (err: any) {
+    // Network / offline error handling
+    if (err.name === 'TypeError' && err.message?.includes('fetch')) {
+      throw new Error('Unable to connect to the backend server. Please verify network connectivity.');
+    }
+    throw err;
+  }
 };
 
 export const simulateDelay = <T>(data: T, delayMs: number = 200): Promise<T> => {

@@ -8,9 +8,11 @@ import { AutomationFunnel } from '../components/dashboard/AutomationFunnel';
 import { RecentActivityList } from '../components/dashboard/RecentActivityList';
 import { Button } from '../components/ui/Button';
 import { useApp } from '../context/AppContext';
+import { useAuth } from '../context/AuthContext';
 
 export const DashboardPage: React.FC = () => {
   const navigate = useNavigate();
+  const { user } = useAuth();
   const {
     totalPayables,
     invoicesReceived,
@@ -21,6 +23,7 @@ export const DashboardPage: React.FC = () => {
   } = useApp();
 
   const formatLakhs = (amt: number) => `₹${(amt / 100000).toFixed(1)}L`;
+  const firstName = user?.name ? user.name.split(' ')[0] : 'there';
 
   return (
     <div className="space-y-6">
@@ -28,10 +31,10 @@ export const DashboardPage: React.FC = () => {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-slate-900 flex items-center gap-2">
-            Good morning, Prakhar 👋
+            Good day, {firstName} 👋
           </h1>
           <p className="text-sm text-slate-500 mt-0.5">
-            Here's what needs your attention today.
+            Here's what needs your attention today in {user?.companyName || 'your organization'}.
           </p>
         </div>
 
