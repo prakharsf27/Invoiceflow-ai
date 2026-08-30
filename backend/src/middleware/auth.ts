@@ -3,16 +3,14 @@ import jwt from 'jsonwebtoken';
 import { UserRole } from '../models/User.js';
 
 export const getJwtSecret = (): string => {
-    const secret = process.env.JWT_SECRET?.trim();
+  const secret = process.env.JWT_SECRET?.trim();
 
-    if (!secret) {
-        throw new Error('JWT_SECRET environment variable is not configured');
-    }
+  if (!secret) {
+    throw new Error('JWT_SECRET environment variable is not configured');
+  }
 
-    return secret;
+  return secret;
 };
-
-export const JWT_SECRET = getJwtSecret();
 
 export interface AuthUserPayload {
   userId: string;

@@ -1,9 +1,9 @@
+import "./config/env.js";
+
 import express from "express";
 import cors from "cors";
 import helmet from "helmet";
 import morgan from "morgan";
-import dotenv from "dotenv";
-import path from "path";
 
 import { connectDB } from "./config/db.js";
 
@@ -19,10 +19,6 @@ import aiRoutes from "./routes/aiRoutes.js";
 import documentRoutes from "./routes/documentRoutes.js";
 
 import { requireAuth } from "./middleware/auth.js";
-
-dotenv.config();
-dotenv.config({ path: path.resolve(process.cwd(), '.env') });
-dotenv.config({ path: path.resolve(process.cwd(), 'backend/.env') });
 
 const app = express();
 const PORT = Number(process.env.PORT) || 5001;
