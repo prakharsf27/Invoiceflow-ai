@@ -1,13 +1,16 @@
 import { ExtractedInvoiceData, ExtractedPOData } from '../ai/aiExtractionService.js';
 import { NormalizationHelper } from './normalizationHelper.js';
 import { DocumentType } from '../../models/Document.js';
+import { ExtractionQualityEvaluator, ExtractionQualityResult } from './extractionQualityEvaluator.js';
 
 export interface DeterministicResult<T> {
   data: T;
   extractionMethod: 'pdf_text' | 'ocr';
   confidence: number;
+  quality: 'high' | 'incomplete' | 'ambiguous';
   needsAI: boolean;
   missingOrAmbiguousFields: string[];
+  warnings: string[];
   rawTextSample?: string;
 }
 
@@ -263,35 +266,10 @@ export class DeterministicParserService {
     // 11. Line Items Parsing
     const lineItems = this.extractLineItems(text);
 
-    // 12. Evaluate Confidence & Missing Required Fields
-    const missingOrAmbiguousFields: string[] = [];
-    if (!invoiceNumber) missingOrAmbiguousFields.push('invoiceNumber');
-    if (!supplierName) missingOrAmbiguousFields.push('supplierName');
-    if (!invoiceDate) missingOrAmbiguousFields.push('invoiceDate');
-    if (!amount || amount <= 0) missingOrAmbiguousFields.push('amount');
-
-    // Check if table was expected but no items extracted
-    const hasTableIndicator = /(?:item|description|particulars)\s+(?:qty|quantity|units)\s+(?:unit\s*price|rate)/i.test(text);
-    if (hasTableIndicator && lineItems.length === 0) {
-      missingOrAmbiguousFields.push('lineItems');
-    }
-
-    // Score computation
-    let score = 0.40;
-    if (invoiceNumber) score += 0.15;
-    if (supplierName) score += 0.15;
-    if (invoiceDate) score += 0.15;
-    if (amount && amount > 0) score += 0.15;
-    if (subtotal && tax && Math.abs(subtotal + tax - discount - (amount || 0)) <= 2) score += 0.10;
-    if (supplierGstin) score += 0.05;
-    if (lineItems.length > 0) score += 0.10;
-
-    const confidence = Math.min(0.98, Math.round(score * 100) / 100);
-    const needsAI = missingOrAmbiguousFields.length > 0 || (amount === null || amount <= 0) || confidence < 0.85;
-
+    // Initial preliminary data structure
     const data: ExtractedInvoiceData = {
       documentType: 'invoice',
-      confidence,
+      confidence: 0.50,
       invoiceNumber,
       supplierName,
       supplierGstin: supplierGstin || null,
@@ -310,12 +288,18 @@ export class DeterministicParserService {
       lineItems,
     };
 
+    // 12. Robust Extraction Quality Assessment
+    const qualityResult = ExtractionQualityEvaluator.evaluateInvoiceQuality(text, data);
+    data.confidence = qualityResult.confidence;
+
     return {
       data,
       extractionMethod: sourceMethod,
-      confidence,
-      needsAI,
-      missingOrAmbiguousFields,
+      confidence: qualityResult.confidence,
+      quality: qualityResult.quality,
+      needsAI: qualityResult.needsAiFallback,
+      missingOrAmbiguousFields: qualityResult.missingFields,
+      warnings: qualityResult.warnings,
       rawTextSample: text.slice(0, 300),
     };
   }
@@ -332,9 +316,9 @@ export class DeterministicParserService {
     // 1. PO Number Extraction
     let poNumber: string | null = null;
     const poNumPatterns = [
-      /\b(?:purchase\s*order|po)\s*(?:number|no\.?|#|id)?[\s:]*(?:[\r\n]+\s*)?([a-zA-Z0-9\-_/]{3,30})/i,
-      /\bpo[-_]\d{4}[-_]\d{3,8}\b/i,
-      /^(?:po|purchase\s*order)[\s:]+([a-zA-Z0-9\-_/]{3,30})/im,
+      /\b(?:purchase\s*order|po)\s*(?:number|no\.?|#|id)[\s:]*(?:[\r\n]+\s*)?([a-zA-Z0-9\-_/]{3,30})/i,
+      /\bpo[-_][a-zA-Z0-9\-_]{3,25}\b/i,
+      /(?:^|\n)\s*(?:purchase\s*order|po)[\s:#]+([a-zA-Z0-9\-_/]{3,30})/i,
     ];
     for (const pat of poNumPatterns) {
       const match = text.match(pat);
@@ -446,27 +430,9 @@ export class DeterministicParserService {
     // 6. Line Items
     const lineItems = this.extractLineItems(text);
 
-    // 7. Validate Confidence & Missing Fields
-    const missingOrAmbiguousFields: string[] = [];
-    if (!poNumber) missingOrAmbiguousFields.push('poNumber');
-    if (!supplierName) missingOrAmbiguousFields.push('supplierName');
-    if (!poDate) missingOrAmbiguousFields.push('poDate');
-    if (!total || total <= 0) missingOrAmbiguousFields.push('total');
-
-    let score = 0.40;
-    if (poNumber) score += 0.20;
-    if (supplierName) score += 0.15;
-    if (poDate) score += 0.15;
-    if (total && total > 0) score += 0.15;
-    if (buyerName) score += 0.05;
-    if (lineItems.length > 0) score += 0.10;
-
-    const confidence = Math.min(0.98, Math.round(score * 100) / 100);
-    const needsAI = missingOrAmbiguousFields.length > 0 || (total === null || total <= 0) || confidence < 0.85;
-
     const data: ExtractedPOData = {
       documentType: 'purchase_order',
-      confidence,
+      confidence: 0.50,
       poNumber,
       poDate: poDate || null,
       buyerName: buyerName || null,
@@ -484,12 +450,18 @@ export class DeterministicParserService {
       lineItems,
     };
 
+    // 7. Robust PO Extraction Quality Assessment
+    const qualityResult = ExtractionQualityEvaluator.evaluatePOQuality(text, data);
+    data.confidence = qualityResult.confidence;
+
     return {
       data,
       extractionMethod: sourceMethod,
-      confidence,
-      needsAI,
-      missingOrAmbiguousFields,
+      confidence: qualityResult.confidence,
+      quality: qualityResult.quality,
+      needsAI: qualityResult.needsAiFallback,
+      missingOrAmbiguousFields: qualityResult.missingFields,
+      warnings: qualityResult.warnings,
       rawTextSample: text.slice(0, 300),
     };
   }
@@ -503,7 +475,7 @@ export class DeterministicParserService {
     let description = rawDesc.trim().replace(/^\d+[.)]\s*/, '');
 
     // If itemCode is an ordinary word without digits/hyphens, treat it as part of description
-    if (itemCode && /^[A-Za-z]{3,}$/.test(itemCode) && !/^(?:SKU|ITEM|CODE|NO|ITM)$/i.test(itemCode)) {
+    if (itemCode && /^[A-Za-z]{3,}$/.test(itemCode) && !/^(?:SKU|ITEM|CODE|NO|ITM|HSN|SAC)$/i.test(itemCode)) {
       description = `${itemCode} ${description}`;
       itemCode = null;
     }
@@ -514,7 +486,9 @@ export class DeterministicParserService {
   /**
    * Helper to parse line item rows from text layouts.
    * Supports:
+   * - Pipe and tab delimited tables
    * - Split CGST + SGST columns: [Code/Num] [Description] [Qty] [UnitPrice] [CGST%] [SGST%] [Total]
+   * - 6-value tail with HSN/SAC code
    * - 5-value tail: [Code/Num] [Description] [Qty] [UnitPrice] [TaxRate%] [TaxAmount] [Total]
    * - 4-value tail: [Code/Num] [Description] [Qty] [UnitPrice] [TaxRate%] [Total]
    * - 3-value tail: [Code/Num] [Description] [Qty] [UnitPrice] [Total]
@@ -549,12 +523,13 @@ export class DeterministicParserService {
       if (!rawLine || rawLine.length < 5) continue;
 
       // Skip table headers or invoice summary lines
-      if (/^(?:item|code|description|particulars|qty|quantity|units|unit\s*price|rate|subtotal|sub\s*total|tax\b|gst\b|cgst\b|sgst\b|igst\b|grand\s*total|total\s*amount|net\s*amount|notes\b|payment\s*terms|terms\b|bank\b|seller|buyer|supplier)/i.test(rawLine)) {
+      if (/^(?:item|code|description|particulars|qty|quantity|units|unit\s*price|rate|subtotal|sub\s*total|tax\b|gst\b|cgst\b|sgst\b|igst\b|grand\s*total|total\s*amount|net\s*amount|notes\b|payment\s*terms|terms\b|bank\b|seller|buyer|supplier|line\s*items)/i.test(rawLine)) {
         continue;
       }
 
-      // Pre-clean currency glyphs and artifacts
+      // Pre-clean pipes, currency glyphs and artifacts
       const cleaned = rawLine
+        .replace(/\|/g, ' ')
         .replace(/[\u25A0\u25AA\uFFFD■▪●₹$€£]/g, ' ')
         .replace(/\b[nN](?=\d)/g, '')
         .replace(/\bRs\.?\s*/gi, '')
@@ -621,6 +596,7 @@ export class DeterministicParserService {
       // 1E. Wrapped multi-line parsing: Line i is description, Line i+1 is numbers
       if (i + 1 < lines.length) {
         const nextCleaned = lines[i + 1].trim()
+          .replace(/\|/g, ' ')
           .replace(/[\u25A0\u25AA\uFFFD■▪●₹$€£]/g, ' ')
           .replace(/\b[nN](?=\d)/g, '')
           .replace(/\bRs\.?\s*/gi, '')

@@ -46,6 +46,7 @@ export interface IDocumentEntity extends Document {
   processingStatus: ProcessingStatus;
   extractionStatus: ExtractionStatus;
   extractionMethod?: 'pdf_text' | 'ocr' | 'ai';
+  extractionQuality?: 'high' | 'incomplete' | 'ambiguous';
   aiAssisted?: boolean;
   extractionError?: string;
   extractedData?: any;
@@ -91,6 +92,11 @@ const DocumentSchema = new Schema<IDocumentEntity>(
     extractionMethod: {
       type: String,
       enum: ['pdf_text', 'ocr', 'ai'],
+    },
+    extractionQuality: {
+      type: String,
+      enum: ['high', 'incomplete', 'ambiguous'],
+      default: 'high',
     },
     aiAssisted: { type: Boolean, default: false },
     extractionError: { type: String },

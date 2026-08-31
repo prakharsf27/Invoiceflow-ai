@@ -200,8 +200,11 @@ class DocumentProcessingService {
         // After PO is successfully stored, re-match all company invoices referencing this PO number
         const processedPONum = (extractedPayload.poNumber || '').trim();
         if (processedPONum) {
-          poMatchingService.rematchInvoicesForPO(companyId, processedPONum)
-            .catch((err: any) => console.warn('[DocumentProcessingService] rematchInvoicesForPO non-blocking error:', err?.message));
+          try {
+            await poMatchingService.rematchInvoicesForPO(companyId, processedPONum);
+          } catch (rematchErr: any) {
+            console.warn('[DocumentProcessingService] rematchInvoicesForPO non-blocking error:', rematchErr?.message);
+          }
         }
       } else {
         // Invoice processing
@@ -414,6 +417,7 @@ class DocumentProcessingService {
             documentType: docType,
             extractedData: extractedPayload,
             extractionMethod: extractionResult.extractionMethod,
+            extractionQuality: extractionResult.quality || 'high',
             aiAssisted: extractionResult.aiAssisted,
             validationResults,
             matchResult,

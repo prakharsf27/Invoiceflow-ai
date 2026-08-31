@@ -3,6 +3,7 @@ import { documentTextExtractionService } from '../documentTextExtractionService.
 import { ocrService } from './ocrService.js';
 import { deterministicParserService } from './deterministicParserService.js';
 import { NormalizationHelper } from './normalizationHelper.js';
+import { ExtractionQualityEvaluator } from './extractionQualityEvaluator.js';
 import {
   aiExtractionService,
   ExtractedInvoiceData,
@@ -15,14 +16,17 @@ export interface HybridExtractionResult<T> {
   model?: string;
   extractionMethod: 'pdf_text' | 'ocr' | 'ai';
   confidence: number;
+  quality: 'high' | 'incomplete' | 'ambiguous';
   aiAssisted: boolean;
   documentType: DocumentType;
+  missingFields?: string[];
+  warnings?: string[];
 }
 
 class HybridExtractionService {
   /**
    * Main Hybrid Extraction Pipeline.
-   * Runs: PDF Text -> OCR -> Deterministic Parsing -> Validation -> AI Fallback & Smart Merging.
+   * Runs: PDF Text -> OCR -> Deterministic Parsing -> Quality Validation -> AI Fallback & Field-Level Merging.
    */
   public async extractDocument(
     fileBuffer: Buffer,
@@ -87,14 +91,14 @@ class HybridExtractionService {
     }
 
     // -------------------------------------------------------------
-    // Step 3: Deterministic Field Extraction
+    // Step 3: Deterministic Field Extraction & Quality Assessment
     // -------------------------------------------------------------
     if (isUsableText) {
       if (detectedType === 'purchase_order') {
         const detResult = deterministicParserService.parsePOText(extractedText, sourceMethod);
 
-        if (!detResult.needsAI) {
-          console.log(`[DOC] Extraction strategy: LOCAL`);
+        if (detResult.quality === 'high' && !detResult.needsAI) {
+          console.log(`[DOC] Extraction strategy: LOCAL (Quality: HIGH, 0 AI calls required)`);
           console.log(`[DOC] Local extraction confidence: ${detResult.confidence}`);
           console.log(`[DOC] Local PO extracted: PO# "${detResult.data.poNumber}", Supplier: "${detResult.data.supplierName}", Total: ${detResult.data.total}`);
 
@@ -102,18 +106,22 @@ class HybridExtractionService {
             data: detResult.data,
             extractionMethod: sourceMethod,
             confidence: detResult.confidence,
+            quality: 'high',
             aiAssisted: false,
             documentType: 'purchase_order',
             model: 'deterministic_parser',
+            missingFields: [],
+            warnings: detResult.warnings,
           };
         } else {
-          console.log(`[DOC] Local PO extraction incomplete (missing fields: ${detResult.missingOrAmbiguousFields.join(', ')}). Falling back to AI...`);
+          console.log(`[DOC] Local PO extraction evaluated as ${detResult.quality.toUpperCase()} (missing/ambiguous: ${detResult.missingOrAmbiguousFields.join(', ')}). Warnings: ${detResult.warnings.join('; ')}`);
+          console.log(`[DOC] Triggering selective AI fallback for quality completion...`);
         }
       } else {
         const detResult = deterministicParserService.parseInvoiceText(extractedText, sourceMethod);
 
-        if (!detResult.needsAI) {
-          console.log(`[DOC] Extraction strategy: LOCAL`);
+        if (detResult.quality === 'high' && !detResult.needsAI) {
+          console.log(`[DOC] Extraction strategy: LOCAL (Quality: HIGH, 0 AI calls required)`);
           console.log(`[DOC] Local extraction confidence: ${detResult.confidence}`);
           console.log(`[DOC] Local Invoice extracted: Inv# "${detResult.data.invoiceNumber}", Supplier: "${detResult.data.supplierName}", Amount: ${detResult.data.amount}`);
 
@@ -121,21 +129,25 @@ class HybridExtractionService {
             data: detResult.data,
             extractionMethod: sourceMethod,
             confidence: detResult.confidence,
+            quality: 'high',
             aiAssisted: false,
             documentType: 'invoice',
             model: 'deterministic_parser',
+            missingFields: [],
+            warnings: detResult.warnings,
           };
         } else {
-          console.log(`[DOC] Local Invoice extraction incomplete (missing fields: ${detResult.missingOrAmbiguousFields.join(', ')}). Falling back to AI...`);
+          console.log(`[DOC] Local Invoice extraction evaluated as ${detResult.quality.toUpperCase()} (missing/ambiguous: ${detResult.missingOrAmbiguousFields.join(', ')}). Warnings: ${detResult.warnings.join('; ')}`);
+          console.log(`[DOC] Triggering selective AI fallback for quality completion...`);
         }
       }
     }
 
     // -------------------------------------------------------------
-    // Step 4: AI Fallback & Intelligent Merging
-    // (Triggered ONLY when text was unusable or essential fields are missing)
+    // Step 4: AI Fallback & Intelligent Field-Level Merging
+    // (Triggered ONLY when text was unusable or essential fields/line items are missing)
     // -------------------------------------------------------------
-    console.log(`[DOC] Extraction strategy: AI`);
+    console.log(`[DOC] Extraction strategy: AI (Serialized AI Queue)`);
 
     if (detectedType === 'purchase_order') {
       const aiRes = await aiExtractionService.extractPODocument(fileBuffer, mimeType, {
@@ -150,15 +162,20 @@ class HybridExtractionService {
         mergedData = this.mergePOData(detResult.data, aiRes.data);
       }
 
-      console.log(`[DOC] Extraction complete via AI (model: ${aiRes.model})`);
+      const qualityCheck = ExtractionQualityEvaluator.evaluatePOQuality(extractedText, mergedData);
+
+      console.log(`[DOC] Extraction complete via AI (model: ${aiRes.model}, quality: ${qualityCheck.quality})`);
       return {
         data: mergedData,
         rawJson: aiRes.rawJson,
         model: aiRes.model,
         extractionMethod: 'ai',
-        confidence: aiRes.data.confidence || 0.88,
+        confidence: Math.max(mergedData.confidence, qualityCheck.confidence),
+        quality: qualityCheck.quality,
         aiAssisted: true,
         documentType: 'purchase_order',
+        missingFields: qualityCheck.missingFields,
+        warnings: qualityCheck.warnings,
       };
     } else {
       const aiRes = await aiExtractionService.extractInvoiceDocument(fileBuffer, mimeType, {
@@ -173,22 +190,30 @@ class HybridExtractionService {
         mergedData = this.mergeInvoiceData(detResult.data, aiRes.data);
       }
 
-      console.log(`[DOC] Extraction complete via AI (model: ${aiRes.model})`);
+      const qualityCheck = ExtractionQualityEvaluator.evaluateInvoiceQuality(extractedText, mergedData);
+
+      console.log(`[DOC] Extraction complete via AI (model: ${aiRes.model}, quality: ${qualityCheck.quality})`);
       return {
         data: mergedData,
         rawJson: aiRes.rawJson,
         model: aiRes.model,
         extractionMethod: 'ai',
-        confidence: aiRes.data.confidence || 0.88,
+        confidence: Math.max(mergedData.confidence, qualityCheck.confidence),
+        quality: qualityCheck.quality,
         aiAssisted: true,
         documentType: 'invoice',
+        missingFields: qualityCheck.missingFields,
+        warnings: qualityCheck.warnings,
       };
     }
   }
 
   /**
    * Smartly merge deterministic invoice data with AI fallback data.
-   * Preserves reliable deterministic values while using AI to resolve missing/ambiguous fields.
+   * Priority:
+   * 1. Reliable deterministic values (e.g. invoiceNumber, dates, amounts when valid).
+   * 2. AI values when deterministic values are missing, null, or incomplete (e.g. lineItems).
+   * 3. Re-calculated derived fields.
    */
   private mergeInvoiceData(
     det: ExtractedInvoiceData,
@@ -201,9 +226,14 @@ class HybridExtractionService {
       dueDate = NormalizationHelper.calculateDueDateFromTerms(invDate, terms);
     }
 
+    // Determine line items: prefer deterministic if populated and non-empty, otherwise use AI-extracted items
+    let lineItems = (det.lineItems && det.lineItems.length > 0)
+      ? det.lineItems
+      : (ai.lineItems || []);
+
     return {
       documentType: 'invoice',
-      confidence: Math.max(det.confidence, ai.confidence),
+      confidence: Math.max(det.confidence, ai.confidence || 0.88),
       invoiceNumber: det.invoiceNumber || ai.invoiceNumber,
       supplierName: det.supplierName || ai.supplierName,
       supplierGstin: det.supplierGstin || ai.supplierGstin,
@@ -223,7 +253,7 @@ class HybridExtractionService {
         ifsc: det.bankDetails?.ifsc || ai.bankDetails?.ifsc || null,
         bankName: det.bankDetails?.bankName || ai.bankDetails?.bankName || null,
       },
-      lineItems: (det.lineItems && det.lineItems.length > 0) ? det.lineItems : ai.lineItems,
+      lineItems,
     };
   }
 
@@ -234,9 +264,13 @@ class HybridExtractionService {
     det: ExtractedPOData,
     ai: ExtractedPOData
   ): ExtractedPOData {
+    let lineItems = (det.lineItems && det.lineItems.length > 0)
+      ? det.lineItems
+      : (ai.lineItems || []);
+
     return {
       documentType: 'purchase_order',
-      confidence: Math.max(det.confidence, ai.confidence),
+      confidence: Math.max(det.confidence, ai.confidence || 0.88),
       poNumber: det.poNumber || ai.poNumber,
       poDate: det.poDate || ai.poDate,
       buyerName: det.buyerName || ai.buyerName,
@@ -251,7 +285,7 @@ class HybridExtractionService {
       subtotal: (det.subtotal && det.subtotal > 0) ? det.subtotal : ai.subtotal,
       tax: (det.tax && det.tax > 0) ? det.tax : ai.tax,
       total: (det.total && det.total > 0) ? det.total : ai.total,
-      lineItems: (det.lineItems && det.lineItems.length > 0) ? det.lineItems : ai.lineItems,
+      lineItems,
     };
   }
 }
