@@ -8,8 +8,12 @@ import { formatFullINR } from '../lib/utils';
 
 export const PaymentsPage: React.FC = () => {
   const navigate = useNavigate();
-  const { payments } = useApp();
+  const { payments, refreshData } = useApp();
   const [filter, setFilter] = useState<'all' | 'pending' | 'scheduled' | 'paid' | 'on_hold' | 'overdue'>('all');
+
+  React.useEffect(() => {
+    refreshData();
+  }, [refreshData]);
 
   const filteredPayments = payments.filter((p) => filter === 'all' || p.status === filter);
 

@@ -12,14 +12,14 @@ export const AttentionRequiredSection: React.FC = () => {
 
   // Filter central invoices for those requiring attention
   const attentionInvoices = invoices.filter(
-    (i) => i.status === 'review' || i.status === 'critical' || i.status === 'on_hold' || i.riskLevel === 'high'
+    (i) => i.status === 'review' || i.status === 'critical' || i.status === 'hold' || i.status === 'on_hold' || i.riskLevel === 'high'
   );
 
   const getSeverityBadge = (status: string, riskLevel: string) => {
     if (status === 'critical' || riskLevel === 'high') {
       return <Badge variant="danger" size="sm" dot>HIGH PRIORITY</Badge>;
     }
-    if (status === 'on_hold') {
+    if (status === 'on_hold' || status === 'hold') {
       return <Badge variant="warning" size="sm" dot>ON HOLD</Badge>;
     }
     return <Badge variant="warning" size="sm" dot>REVIEW</Badge>;
@@ -61,8 +61,14 @@ export const AttentionRequiredSection: React.FC = () => {
       {attentionInvoices.length === 0 ? (
         <Card className="p-6 text-center space-y-2 border-slate-200">
           <CheckCircle2 className="w-8 h-8 text-emerald-500 mx-auto" />
-          <h3 className="text-sm font-bold text-slate-900">All exceptions cleared!</h3>
-          <p className="text-xs text-slate-500">Every incoming invoice is reconciled and ready for payout.</p>
+          <h3 className="text-sm font-bold text-slate-900">
+            {invoices.length === 0 ? 'No invoices in workspace yet' : 'All exceptions cleared!'}
+          </h3>
+          <p className="text-xs text-slate-500">
+            {invoices.length === 0
+              ? 'Upload an invoice via the Upload tab to begin automated processing.'
+              : 'Every incoming invoice in this workspace is reconciled and ready for payout.'}
+          </p>
         </Card>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">

@@ -7,7 +7,7 @@ export const AutomationFunnel: React.FC = () => {
   const { invoices } = useApp();
 
   const totalProcessedCount = invoices.length;
-  const autoClearedCount = invoices.filter((i) => i.status === 'ready' || i.status === 'paid').length;
+  const autoClearedCount = invoices.filter((i) => i.status === 'ready' || i.status === 'approved' || i.status === 'paid').length;
   const needsReviewCount = invoices.filter((i) => i.status === 'review' || i.status === 'hold' || i.status === 'on_hold').length;
   const criticalCount = invoices.filter((i) => i.status === 'critical' || i.riskLevel === 'high').length;
 

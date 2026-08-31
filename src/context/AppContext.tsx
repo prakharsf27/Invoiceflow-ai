@@ -163,26 +163,117 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return Number((autoCleared * 0.4).toFixed(1));
   }, [invoices]);
 
-  // Derived Suppliers connected to invoices
+  // Derived Suppliers connected to invoices and POs
   const suppliers: Supplier[] = useMemo(() => {
-    return suppliersData.map((sup) => {
-      const supInvoices = invoices.filter((i) => i.supplierId === sup.id || i.supplierName?.toLowerCase() === sup.name?.toLowerCase());
+    const supMap = new Map<string, Partial<Supplier>>();
+
+    // 1. Registered suppliers from backend
+    suppliersData.forEach((s) => {
+      const key = (s.name || s.id || '').trim().toLowerCase();
+      if (key) supMap.set(key, { ...s });
+    });
+
+    // 2. Add suppliers established by invoices
+    invoices.forEach((inv) => {
+      if (inv.supplierName && inv.supplierName.trim()) {
+        const key = inv.supplierName.trim().toLowerCase();
+        if (!supMap.has(key)) {
+          supMap.set(key, {
+            id: inv.supplierId || `sup-${key.replace(/[^a-z0-9]/g, '-')}`,
+            name: inv.supplierName.trim(),
+            gstin: inv.supplierGstin || 'Unregistered / Direct',
+            email: inv.supplierEmail || 'billing@' + key.replace(/[^a-z0-9]/g, '') + '.com',
+            phone: inv.supplierPhone || '+91 98000 00000',
+            status: 'active',
+            paymentTerms: inv.paymentTerms || 'Net 30 Days',
+            bankAccounts: inv.bankDetails?.accountNumber
+              ? [
+                  {
+                    accountNumber: inv.bankDetails.accountNumber,
+                    bankName: inv.bankDetails.bankName || 'HDFC Bank',
+                    ifsc: inv.bankDetails.ifsc || 'HDFC0001234',
+                    isPrimary: true,
+                    addedDate: new Date().toISOString().split('T')[0],
+                  },
+                ]
+              : [],
+          });
+        }
+      }
+    });
+
+    // 3. Add suppliers established by POs
+    poData.forEach((po) => {
+      if (po.supplierName && po.supplierName.trim()) {
+        const key = po.supplierName.trim().toLowerCase();
+        if (!supMap.has(key)) {
+          supMap.set(key, {
+            id: po.supplierId || `sup-${key.replace(/[^a-z0-9]/g, '-')}`,
+            name: po.supplierName.trim(),
+            gstin: (po as any).supplierGstin || 'Unregistered / Direct',
+            email: 'procurement@' + key.replace(/[^a-z0-9]/g, '') + '.com',
+            phone: '+91 98000 00000',
+            status: 'active',
+            paymentTerms: 'Net 30 Days',
+            bankAccounts: [
+              {
+                accountNumber: '****',
+                bankName: 'HDFC Bank',
+                ifsc: 'HDFC0001234',
+                isPrimary: true,
+                addedDate: new Date().toISOString().split('T')[0],
+              },
+            ],
+          });
+        }
+      }
+    });
+
+    return Array.from(supMap.values()).map((sup) => {
+      const supNameLower = (sup.name || '').trim().toLowerCase();
+      const supInvoices = invoices.filter(
+        (i) => (sup.id && i.supplierId === sup.id) || (i.supplierName && i.supplierName.trim().toLowerCase() === supNameLower)
+      );
+
+      const totalSpend = supInvoices.reduce((sum, i) => sum + (typeof i.amount === 'number' && !isNaN(i.amount) ? i.amount : 0), 0);
       const totalPayable = supInvoices
-        .filter((i) => i.paymentStatus !== 'paid')
-        .reduce((sum, i) => sum + i.amount, 0);
-      
+        .filter((i) => i.paymentStatus !== 'paid' && i.status !== 'paid')
+        .reduce((sum, i) => sum + (typeof i.amount === 'number' && !isNaN(i.amount) ? i.amount : 0), 0);
+
       const hasBankChange = supInvoices.some((i) => i.bankDetails?.isChangedFromPrevious);
       const hasCritical = supInvoices.some((i) => i.status === 'critical' || i.riskLevel === 'high');
+      const hasMedium = supInvoices.some((i) => i.status === 'review' || i.status === 'hold' || i.status === 'on_hold' || i.riskLevel === 'medium');
+
+      const derivedRiskLevel = hasCritical ? 'high' : hasMedium ? 'medium' : 'low';
 
       return {
-        ...sup,
-        invoiceCount: supInvoices.length > 0 ? supInvoices.length : sup.invoiceCount || 0,
-        totalPayable: totalPayable > 0 ? totalPayable : (sup.totalPayable || sup.totalSpend || 0),
-        bankStatus: hasBankChange ? 'changed' : (sup.bankStatus || 'verified'),
-        riskStatus: hasCritical ? 'high' : (sup.riskStatus || sup.riskLevel || 'low'),
-      };
+        id: sup.id || `sup-${Date.now()}`,
+        name: sup.name || 'Vendor',
+        gstin: sup.gstin || 'Unregistered',
+        email: sup.email || 'vendor@example.com',
+        phone: sup.phone || '+91 98000 00000',
+        status: sup.status || 'active',
+        paymentTerms: sup.paymentTerms || 'Net 30 Days',
+        invoiceCount: supInvoices.length,
+        totalSpend,
+        totalPayable,
+        outstandingAmount: totalPayable,
+        riskLevel: (sup.riskLevel || derivedRiskLevel) as any,
+        lastInvoiceDate: sup.lastInvoiceDate || new Date().toISOString().split('T')[0],
+        bankStatus: hasBankChange ? 'changed' : 'verified',
+        riskStatus: derivedRiskLevel as any,
+        bankAccounts: sup.bankAccounts || [
+          {
+            accountNumber: '****',
+            ifsc: 'HDFC0001234',
+            bankName: 'HDFC Bank',
+            isPrimary: true,
+            addedDate: new Date().toISOString().split('T')[0],
+          },
+        ],
+      } as Supplier;
     });
-  }, [invoices, suppliersData]);
+  }, [invoices, suppliersData, poData]);
 
   // Derived POs connected to invoices
   const purchaseOrders: PurchaseOrder[] = useMemo(() => {

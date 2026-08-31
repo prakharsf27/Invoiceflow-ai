@@ -24,7 +24,11 @@ import type { Supplier } from '../types';
 
 export const SuppliersPage: React.FC = () => {
   const navigate = useNavigate();
-  const { suppliers, createSupplier, updateSupplier, deleteSupplier } = useApp();
+  const { suppliers, createSupplier, updateSupplier, deleteSupplier, refreshData } = useApp();
+
+  React.useEffect(() => {
+    refreshData();
+  }, [refreshData]);
 
   const [search, setSearch] = useState('');
   const [filterTab, setFilterTab] = useState<'all' | 'active' | 'bank_flagged' | 'high_risk'>('all');

@@ -5,7 +5,11 @@ import { useApp } from '../context/AppContext';
 import { FileText, CheckCircle2 } from 'lucide-react';
 
 export const ReportsPage: React.FC = () => {
-  const { invoices, timeSavedHours } = useApp();
+  const { invoices, timeSavedHours, refreshData } = useApp();
+
+  React.useEffect(() => {
+    refreshData();
+  }, [refreshData]);
 
   const totalInvoices = invoices.length;
   const autoCleared = invoices.filter((i) => i.status === 'ready' || i.status === 'paid').length;

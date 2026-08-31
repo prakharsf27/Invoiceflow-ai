@@ -9,16 +9,14 @@ import {
   Calculator,
   FileText,
   Bot,
-  HelpCircle,
   TrendingUp,
-  Clock,
-  ArrowRight,
   Info,
 } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { Badge } from '../ui/Badge';
 import type { Invoice, InvoiceRiskAnalysis } from '../../types';
 import { useNavigate } from 'react-router-dom';
+import { useApp } from '../../context/AppContext';
 
 interface EvidenceModalProps {
   isOpen: boolean;
@@ -34,6 +32,7 @@ export const EvidenceModal: React.FC<EvidenceModalProps> = ({
   riskAnalysis,
 }) => {
   const navigate = useNavigate();
+  const { purchaseOrders } = useApp();
 
   // Close on Escape key
   useEffect(() => {
@@ -52,34 +51,11 @@ export const EvidenceModal: React.FC<EvidenceModalProps> = ({
 
   if (!isOpen) return null;
 
-  // Format currency helpers
+  // Format currency helper
   const formatINR = (val?: number) => {
     if (val === undefined || isNaN(val)) return '₹0';
     return `₹${Math.round(val).toLocaleString('en-IN')}`;
   };
-
-  // Derive risk indicators
-  const riskScore =
-    riskAnalysis?.riskScore ??
-    (invoice.riskLevel === 'high' || invoice.riskLevel === 'critical'
-      ? 85
-      : invoice.riskLevel === 'medium'
-      ? 60
-      : 15);
-
-  const riskLevel = riskAnalysis?.riskLevel ?? invoice.riskLevel ?? 'low';
-  const decision =
-    riskAnalysis?.decision ??
-    (riskLevel === 'high' || riskLevel === 'critical'
-      ? 'hold'
-      : riskLevel === 'medium'
-      ? 'review'
-      : 'approve');
-
-  const recommendation =
-    riskAnalysis?.recommendation ||
-    invoice.aiRecommendation ||
-    'Review flagged parameters and confirm tax computation prior to disbursement release.';
 
   // Math Reconciliation calculations
   const items = Array.isArray(invoice.items) ? invoice.items : [];
@@ -102,16 +78,84 @@ export const EvidenceModal: React.FC<EvidenceModalProps> = ({
   const mathFormulaTotal = declaredSubtotal + declaredTax - (invoice.discount || 0);
   const isMathDiscrepancy =
     Math.abs(mathFormulaTotal - declaredTotal) > 1.0 ||
-    Math.abs(subtotalDiff) > 1.0 ||
-    Math.abs(taxDiff) > 1.0;
+    (items.length > 0 && Math.abs(subtotalDiff) > 1.0) ||
+    (items.length > 0 && Math.abs(taxDiff) > 1.0);
 
-  // Gather all warnings / exceptions
+  // Link PO if available
+  const linkedPO = purchaseOrders.find(
+    (p) =>
+      (invoice.poNumber && p.poNumber.trim().toLowerCase() === invoice.poNumber.trim().toLowerCase()) ||
+      p.id === (invoice as any).poId ||
+      p.invoiceId === invoice.id
+  );
+
+  const poAmount = linkedPO?.totalAmount || 0;
+  const poVariance = linkedPO ? declaredTotal - poAmount : 0;
+  const isPOAmountReconciled = linkedPO && Math.abs(poVariance) <= 2.0;
+  const poVariancePct = poAmount > 0 ? ((Math.abs(poVariance) / poAmount) * 100).toFixed(1) : '0.0';
+
+  // Dynamic deterministic risk calculation
+  let calculatedScore = 10;
+  const detectedAnomalies: string[] = [];
+
+  if (Math.abs(mathFormulaTotal - declaredTotal) > 1.0) {
+    calculatedScore += 30;
+    detectedAnomalies.push(
+      `Math discrepancy: Stated subtotal (${formatINR(declaredSubtotal)}) + tax (${formatINR(declaredTax)}) does not equal total amount (${formatINR(declaredTotal)}).`
+    );
+  }
+
+  if (items.length > 0 && Math.abs(subtotalDiff) > 1.0) {
+    calculatedScore += 20;
+    detectedAnomalies.push(
+      `Itemized subtotal disparity: Sum of line items (${formatINR(calculatedItemsSubtotal)}) differs from header subtotal (${formatINR(declaredSubtotal)}) by ${formatINR(Math.abs(subtotalDiff))}.`
+    );
+  }
+
+  if (items.length > 0 && Math.abs(taxDiff) > 1.0) {
+    calculatedScore += 20;
+    detectedAnomalies.push(
+      `Tax computation disparity: Sum of line taxes (${formatINR(calculatedItemsTax)}) differs from declared invoice tax (${formatINR(declaredTax)}) by ${formatINR(Math.abs(taxDiff))}.`
+    );
+  }
+
+  if (linkedPO && !isPOAmountReconciled) {
+    calculatedScore += 35;
+    if (poVariance > 0) {
+      detectedAnomalies.push(
+        `PO Overrun Discrepancy: Invoice total (${formatINR(declaredTotal)}) exceeds Purchase Order ${linkedPO.poNumber} (${formatINR(poAmount)}) by +${formatINR(poVariance)} (+${poVariancePct}%).`
+      );
+    } else {
+      detectedAnomalies.push(
+        `PO Underrun Discrepancy: Invoice total (${formatINR(declaredTotal)}) is less than Purchase Order ${linkedPO.poNumber} (${formatINR(poAmount)}) by -${formatINR(Math.abs(poVariance))} (-${poVariancePct}%).`
+      );
+    }
+  }
+
+  if (invoice.bankDetails?.isChangedFromPrevious) {
+    calculatedScore += 40;
+    detectedAnomalies.push('Bank details alert: Remittance bank account differs from historical vendor records.');
+  }
+
+  if (
+    invoice.status === 'overdue' ||
+    invoice.paymentStatus === 'overdue' ||
+    (invoice.dueDate && new Date(invoice.dueDate).getTime() < Date.now() && invoice.status !== 'paid')
+  ) {
+    calculatedScore += 15;
+    detectedAnomalies.push(`Payment overdue: Invoice due date (${invoice.dueDate || 'past'}) has elapsed.`);
+  }
+
+  // Merge AI warnings and deterministic detected anomalies
   const riskWarnings = Array.isArray(riskAnalysis?.warnings) ? riskAnalysis!.warnings : [];
   const failedChecks = (invoice.aiChecks || []).filter(
     (c) => !c.passed || c.type === 'critical' || c.type === 'warning'
   );
 
   const allWarnings: string[] = [];
+  detectedAnomalies.forEach((a) => {
+    if (!allWarnings.includes(a)) allWarnings.push(a);
+  });
   riskWarnings.forEach((w) => {
     if (!allWarnings.includes(w)) allWarnings.push(w);
   });
@@ -120,22 +164,37 @@ export const EvidenceModal: React.FC<EvidenceModalProps> = ({
     if (!allWarnings.includes(text)) allWarnings.push(text);
   });
 
-  // If no warnings explicitly present but risk is medium/high, add context
-  if (allWarnings.length === 0 && isMathDiscrepancy) {
-    allWarnings.push(
-      `Tax & line-item breakdown disparity detected: Declared Tax (₹${declaredTax.toLocaleString('en-IN')}) vs Computed Line Items Tax (₹${calculatedItemsTax.toLocaleString('en-IN')}).`
-    );
-  }
+  const finalRiskScore = Math.min(
+    100,
+    Math.max(10, riskAnalysis?.riskScore !== undefined ? riskAnalysis.riskScore : calculatedScore)
+  );
+  const finalRiskLevel =
+    riskAnalysis?.riskLevel ||
+    (finalRiskScore >= 70 ? 'high' : finalRiskScore >= 35 ? 'medium' : 'low');
+  const finalDecision =
+    riskAnalysis?.decision ||
+    (finalRiskLevel === 'high' || finalRiskLevel === 'critical'
+      ? 'hold'
+      : finalRiskLevel === 'medium'
+      ? 'review'
+      : 'approve');
+
+  const recommendation =
+    riskAnalysis?.recommendation ||
+    invoice.aiRecommendation ||
+    (allWarnings.length > 0
+      ? 'Review flagged line items and tax reconciliation before releasing payment disbursement.'
+      : 'All parameters verified. Safe for scheduled payment release.');
 
   const getScoreColor = (score: number) => {
     if (score >= 70) return 'text-rose-700 bg-rose-50 border-rose-200';
-    if (score >= 40) return 'text-amber-700 bg-amber-50 border-amber-200';
+    if (score >= 35) return 'text-amber-700 bg-amber-50 border-amber-200';
     return 'text-emerald-700 bg-emerald-50 border-emerald-200';
   };
 
   const getProgressColor = (score: number) => {
     if (score >= 70) return 'bg-rose-500';
-    if (score >= 40) return 'bg-amber-500';
+    if (score >= 35) return 'bg-amber-500';
     return 'bg-emerald-500';
   };
 
@@ -190,14 +249,14 @@ export const EvidenceModal: React.FC<EvidenceModalProps> = ({
               </div>
               <div className="flex items-baseline gap-1.5">
                 <span className="text-3xl font-extrabold text-slate-900 tabular-nums">
-                  {riskScore}
+                  {finalRiskScore}
                 </span>
                 <span className="text-xs font-medium text-slate-400">/ 100</span>
               </div>
               <div className="w-full bg-slate-200 h-2 rounded-full overflow-hidden">
                 <div
-                  className={`h-full transition-all duration-500 ${getProgressColor(riskScore)}`}
-                  style={{ width: `${Math.max(5, riskScore)}%` }}
+                  className={`h-full transition-all duration-500 ${getProgressColor(finalRiskScore)}`}
+                  style={{ width: `${Math.max(5, finalRiskScore)}%` }}
                 />
               </div>
             </div>
@@ -207,14 +266,14 @@ export const EvidenceModal: React.FC<EvidenceModalProps> = ({
               <span className="text-xs font-medium text-slate-500 block">Risk Evaluation</span>
               <div className="pt-0.5">
                 <span
-                  className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs font-bold uppercase tracking-wider ${getScoreColor(riskScore)}`}
+                  className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs font-bold uppercase tracking-wider ${getScoreColor(finalRiskScore)}`}
                 >
                   <ShieldAlert className="w-3.5 h-3.5" />
-                  {riskLevel} Risk
+                  {finalRiskLevel} Risk
                 </span>
               </div>
               <p className="text-[11px] text-slate-500">
-                {riskLevel === 'low'
+                {finalRiskLevel === 'low'
                   ? 'Standard low-risk invoice'
                   : 'Elevated anomaly indicators detected'}
               </p>
@@ -225,15 +284,15 @@ export const EvidenceModal: React.FC<EvidenceModalProps> = ({
               <span className="text-xs font-medium text-slate-500 block">Decision Recommendation</span>
               <div className="pt-0.5">
                 <Badge
-                  variant={decision === 'approve' ? 'success' : decision === 'hold' ? 'danger' : 'warning'}
+                  variant={finalDecision === 'approve' ? 'success' : finalDecision === 'hold' ? 'danger' : 'warning'}
                   size="sm"
                   className="font-bold uppercase tracking-wider"
                 >
-                  DECISION: {decision.toUpperCase()}
+                  DECISION: {finalDecision.toUpperCase()}
                 </Badge>
               </div>
               <p className="text-[11px] text-slate-500">
-                {decision === 'approve'
+                {finalDecision === 'approve'
                   ? 'Pre-cleared for autonomous disbursement'
                   : 'Requires AP accountant verification'}
               </p>
@@ -291,7 +350,7 @@ export const EvidenceModal: React.FC<EvidenceModalProps> = ({
               </h4>
               {isMathDiscrepancy ? (
                 <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-rose-100 text-rose-800 border border-rose-200">
-                  ⚠ Anomaly Detected
+                  ⚠ Discrepancy Detected
                 </span>
               ) : (
                 <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-emerald-100 text-emerald-800 border border-emerald-200">
@@ -347,21 +406,34 @@ export const EvidenceModal: React.FC<EvidenceModalProps> = ({
                 </div>
               </div>
 
-              {/* Anomaly Explanation Note */}
-              <div className="p-3 rounded-lg bg-blue-50/70 border border-blue-200/70 text-xs text-blue-950 flex items-start gap-2.5">
+              {/* Dynamic 3-Way PO Match Context Note */}
+              <div className="p-3.5 rounded-lg bg-blue-50/70 border border-blue-200/70 text-xs text-blue-950 flex items-start gap-2.5">
                 <Info className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
-                <p className="leading-relaxed text-[11px]">
-                  {invoice.poNumber ? (
+                <div className="leading-relaxed text-[11px] space-y-1">
+                  {linkedPO ? (
+                    isPOAmountReconciled ? (
+                      <>
+                        <span className="font-semibold text-blue-900">3-Way PO Match Context:</span> Invoice total ({formatINR(declaredTotal)}) exactly matches Purchase Order <span className="font-mono font-semibold">{linkedPO.poNumber}</span> ({formatINR(poAmount)}). {isMathDiscrepancy ? 'However, this invoice was flagged for review due to line-item tax breakdown or subtotal computation differences.' : 'All financial amounts are fully reconciled.'}
+                      </>
+                    ) : poVariance > 0 ? (
+                      <>
+                        <span className="font-semibold text-blue-900">3-Way PO Match Context:</span> PO Overrun Detected. Invoice total ({formatINR(declaredTotal)}) exceeds Purchase Order <span className="font-mono font-semibold">{linkedPO.poNumber}</span> ({formatINR(poAmount)}) by <strong className="text-rose-700">+{formatINR(poVariance)} (+{poVariancePct}%)</strong>.
+                      </>
+                    ) : (
+                      <>
+                        <span className="font-semibold text-blue-900">3-Way PO Match Context:</span> PO Underrun Detected. Invoice total ({formatINR(declaredTotal)}) is less than Purchase Order <span className="font-mono font-semibold">{linkedPO.poNumber}</span> ({formatINR(poAmount)}) by <strong className="text-amber-700">-{formatINR(Math.abs(poVariance))} (-{poVariancePct}%)</strong>.
+                      </>
+                    )
+                  ) : invoice.poNumber ? (
                     <>
-                      <span className="font-semibold">3-Way PO Match Context:</span> Invoice total matches Purchase Order{' '}
-                      <span className="font-mono font-semibold">{invoice.poNumber}</span> (₹3,12,700), but the invoice was flagged for review due to non-standard line-item tax rate breakdown or subtotal computation differences.
+                      <span className="font-semibold text-blue-900">3-Way PO Match Context:</span> Referenced Purchase Order <span className="font-mono font-semibold">{invoice.poNumber}</span>. Automated validation cross-references line-item unit pricing, tax rates, and stated invoice totals.
                     </>
                   ) : (
                     <>
-                      <span className="font-semibold">Verification Context:</span> Automated cross-validation compares line-item unit pricing, tax rates, and stated invoice totals to prevent AP overpayments.
+                      <span className="font-semibold text-blue-900">Direct Invoicing Context:</span> Direct vendor billing without linked PO. Automated verification checks GSTIN active status, arithmetic precision, and bank mandate security.
                     </>
                   )}
-                </p>
+                </div>
               </div>
             </div>
           </div>
@@ -390,7 +462,7 @@ export const EvidenceModal: React.FC<EvidenceModalProps> = ({
                       passed: !isMathDiscrepancy,
                       type: isMathDiscrepancy ? ('warning' as const) : ('success' as const),
                       detail: isMathDiscrepancy
-                        ? 'Tax computation breakdown is non-standard.'
+                        ? 'Tax computation breakdown or subtotal disparity detected.'
                         : 'Subtotal + Tax equals declared amount.',
                     },
                     {
@@ -405,9 +477,15 @@ export const EvidenceModal: React.FC<EvidenceModalProps> = ({
                     {
                       id: 'chk-po',
                       title: 'Purchase Order Match',
-                      passed: Boolean(invoice.poNumber),
-                      type: 'success' as const,
-                      detail: invoice.poNumber ? `Matched against ${invoice.poNumber}.` : 'Direct billing invoice.',
+                      passed: Boolean(linkedPO ? isPOAmountReconciled : invoice.poNumber),
+                      type: linkedPO && !isPOAmountReconciled ? ('warning' as const) : ('success' as const),
+                      detail: linkedPO
+                        ? isPOAmountReconciled
+                          ? `Matched 100% against ${linkedPO.poNumber}.`
+                          : `PO variance detected against ${linkedPO.poNumber}.`
+                        : invoice.poNumber
+                        ? `Referenced PO ${invoice.poNumber}.`
+                        : 'Direct billing invoice.',
                     },
                   ]
               ).map((chk) => (

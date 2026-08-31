@@ -11,8 +11,12 @@ import type { CopilotMessage } from '../types';
 
 export const CopilotPage: React.FC = () => {
   const navigate = useNavigate();
-  const { invoices, suppliers, showToast } = useApp();
+  const { invoices, suppliers, showToast, refreshData } = useApp();
   const { user } = useAuth();
+
+  React.useEffect(() => {
+    refreshData();
+  }, [refreshData]);
 
   const [messages, setMessages] = useState<CopilotMessage[]>([
     {

@@ -27,7 +27,11 @@ import type { Supplier } from '../types';
 export const SupplierDetailsPage: React.FC = () => {
   const { supplierId } = useParams<{ supplierId: string }>();
   const navigate = useNavigate();
-  const { suppliers, invoices, updateSupplier, deleteSupplier } = useApp();
+  const { suppliers, invoices, updateSupplier, deleteSupplier, refreshData } = useApp();
+
+  React.useEffect(() => {
+    refreshData();
+  }, [refreshData]);
 
   const [isFormModalOpen, setIsFormModalOpen] = useState(false);
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);

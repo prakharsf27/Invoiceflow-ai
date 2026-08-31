@@ -9,9 +9,13 @@ import { formatFullINR } from '../lib/utils';
 
 export const InvoicesPage: React.FC = () => {
   const navigate = useNavigate();
-  const { invoices } = useApp();
+  const { invoices, refreshData } = useApp();
   const [filter, setFilter] = useState<string>('all');
   const [search, setSearch] = useState<string>('');
+
+  React.useEffect(() => {
+    refreshData();
+  }, [refreshData]);
 
   const filteredInvoices = useMemo(() => {
     return invoices.filter((inv) => {
@@ -68,16 +72,16 @@ export const InvoicesPage: React.FC = () => {
             onClick={() => navigate('/app/upload')}
             variant="brand"
             size="sm"
-            className="cursor-pointer"
+            className="cursor-pointer gap-1.5"
           >
             <Plus className="w-4 h-4" />
-            <span>Upload Invoice</span>
+            <span>Upload Document</span>
           </Button>
         </div>
       </div>
 
-      {/* Filters & Search Toolbar */}
-      <Card className="p-3.5 space-y-3">
+      {/* Filter Tabs & Search */}
+      <Card className="p-3 border-slate-200/90">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
           {/* Tabs */}
           <div className="flex items-center gap-1 overflow-x-auto pb-1 md:pb-0">
@@ -85,7 +89,7 @@ export const InvoicesPage: React.FC = () => {
               <button
                 key={tab.id}
                 onClick={() => setFilter(tab.id)}
-                className={`px-3 py-1.5 text-xs font-medium rounded-lg whitespace-nowrap transition-colors cursor-pointer ${
+                className={`px-3 py-1.5 rounded-lg text-xs transition-colors whitespace-nowrap cursor-pointer ${
                   filter === tab.id
                     ? 'bg-slate-900 text-white font-semibold'
                     : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
@@ -119,12 +123,20 @@ export const InvoicesPage: React.FC = () => {
                 <Plus className="w-6 h-6 text-slate-500" />
               </div>
               <div className="space-y-1">
-                <h3 className="text-base font-bold text-slate-900">No invoices yet</h3>
-                <p className="text-xs text-slate-500">Upload your first invoice to get started.</p>
+                <h3 className="text-base font-bold text-slate-900">
+                  {invoices.length === 0 ? 'No invoices in workspace yet' : 'No matching invoices'}
+                </h3>
+                <p className="text-xs text-slate-500">
+                  {invoices.length === 0
+                    ? 'Upload an invoice or purchase order to begin automated processing.'
+                    : `No invoices match the selected filter "${filterTabs.find((t) => t.id === filter)?.label || filter}".`}
+                </p>
               </div>
-              <Button onClick={() => navigate('/app/upload')} variant="brand" size="sm" className="cursor-pointer">
-                Upload Invoice
-              </Button>
+              {invoices.length === 0 && (
+                <Button onClick={() => navigate('/app/upload')} variant="brand" size="sm" className="cursor-pointer">
+                  Upload Invoice
+                </Button>
+              )}
             </div>
           ) : (
             <table className="w-full text-left text-xs">

@@ -8,9 +8,13 @@ import { FileCheck2, ArrowRight } from 'lucide-react';
 
 export const POMatchingPage: React.FC = () => {
   const navigate = useNavigate();
-  const { purchaseOrders, invoices, acceptPOVariance, requestPOClarification } = useApp();
+  const { purchaseOrders, invoices, acceptPOVariance, requestPOClarification, refreshData } = useApp();
   const [tab, setTab] = useState<'all' | 'mismatch' | 'matched'>('all');
   const [actionLoading, setActionLoading] = useState<string | null>(null);
+
+  React.useEffect(() => {
+    refreshData();
+  }, [refreshData]);
 
   const filteredPOs = purchaseOrders.filter((po) => {
     if (tab === 'mismatch') return po.matchStatus === 'mismatch';

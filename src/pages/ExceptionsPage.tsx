@@ -8,22 +8,26 @@ import { formatFullINR } from '../lib/utils';
 
 export const ExceptionsPage: React.FC = () => {
   const navigate = useNavigate();
-  const { invoices } = useApp();
+  const { invoices, refreshData } = useApp();
   const [filter, setFilter] = useState<'all' | 'critical' | 'review'>('all');
+
+  React.useEffect(() => {
+    refreshData();
+  }, [refreshData]);
 
   // Filter invoices that require human attention
   const activeExceptions = invoices.filter(
-    (i) => i.status === 'review' || i.status === 'critical' || i.status === 'on_hold' || i.riskLevel === 'high'
+    (i) => i.status === 'review' || i.status === 'critical' || i.status === 'hold' || i.status === 'on_hold' || i.riskLevel === 'high'
   );
 
   const filtered = activeExceptions.filter((e) => {
     if (filter === 'critical') return e.status === 'critical' || e.riskLevel === 'high';
-    if (filter === 'review') return e.status === 'review' || e.status === 'on_hold';
+    if (filter === 'review') return e.status === 'review' || e.status === 'hold' || e.status === 'on_hold';
     return true;
   });
 
-  const autoClearedCount = invoices.filter((i) => i.status === 'ready' || i.status === 'paid').length;
-  const autoPercent = invoices.length > 0 ? ((autoClearedCount / invoices.length) * 100).toFixed(1) : '100.0';
+  const autoClearedCount = invoices.filter((i) => i.status === 'ready' || i.status === 'approved' || i.status === 'paid').length;
+  const autoPercent = invoices.length > 0 ? ((autoClearedCount / invoices.length) * 100).toFixed(1) : '0.0';
 
   return (
     <div className="space-y-6">
@@ -78,7 +82,7 @@ export const ExceptionsPage: React.FC = () => {
             filter === 'review' ? 'bg-amber-600 text-white' : 'bg-amber-50 text-amber-800 border border-amber-200 hover:bg-amber-100'
           }`}
         >
-          Review Required ({activeExceptions.filter((e) => e.status === 'review' || e.status === 'on_hold').length})
+          Review Required ({activeExceptions.filter((e) => e.status === 'review' || e.status === 'hold' || e.status === 'on_hold').length})
         </button>
       </div>
 
@@ -86,8 +90,14 @@ export const ExceptionsPage: React.FC = () => {
       {filtered.length === 0 ? (
         <Card className="p-8 text-center space-y-2 border-slate-200">
           <CheckCircle2 className="w-10 h-10 text-emerald-500 mx-auto" />
-          <h3 className="text-base font-bold text-slate-900">No active exceptions in this view</h3>
-          <p className="text-xs text-slate-500">All flagged invoices have been resolved and queued for payment.</p>
+          <h3 className="text-base font-bold text-slate-900">
+            {invoices.length === 0 ? 'No invoices in workspace yet' : 'No active exceptions in this view'}
+          </h3>
+          <p className="text-xs text-slate-500">
+            {invoices.length === 0
+              ? 'Upload invoices to begin automated validation and exception surfacing.'
+              : 'All flagged invoices in this view have been resolved and queued for payment.'}
+          </p>
         </Card>
       ) : (
         <div className="grid grid-cols-1 gap-4">

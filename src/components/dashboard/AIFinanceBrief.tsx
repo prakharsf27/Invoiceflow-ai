@@ -1,6 +1,6 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Sparkles, ArrowRight, ShieldCheck, CheckCircle2 } from 'lucide-react';
+import { Sparkles, ArrowRight, ShieldCheck, CheckCircle2, Info } from 'lucide-react';
 import { Card } from '../ui/Card';
 import { Button } from '../ui/Button';
 import { useApp } from '../../context/AppContext';
@@ -32,11 +32,27 @@ export const AIFinanceBrief: React.FC = () => {
             </span>
           </div>
 
-          {needAttentionCount === 0 ? (
+          {invoices.length === 0 ? (
+            <div className="space-y-2">
+              <p className="text-xs text-slate-700 leading-relaxed max-w-3xl flex items-center gap-2">
+                <Info className="w-4 h-4 text-slate-400 shrink-0" />
+                <span>There are no invoices in your workspace yet.</span>
+              </p>
+              <div className="flex items-start sm:items-center gap-2 px-3.5 py-2 rounded-lg bg-slate-50 border border-slate-200 text-xs text-slate-700">
+                <span className="font-semibold text-slate-900 shrink-0 flex items-center gap-1">
+                  <ShieldCheck className="w-3.5 h-3.5 text-brand-600" />
+                  Status:
+                </span>
+                <span className="text-slate-600 text-[11px]">
+                  Upload an invoice or purchase order via the Upload tab to begin automated 3-way matching and risk scanning.
+                </span>
+              </div>
+            </div>
+          ) : needAttentionCount === 0 ? (
             <div className="space-y-2">
               <p className="text-xs text-slate-700 leading-relaxed max-w-3xl flex items-center gap-2">
                 <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-                <span>All invoices in your workspace are verified and reconciled. Zero critical items require manual review.</span>
+                <span>All processed invoices are currently verified and require no manual review.</span>
               </p>
               <div className="flex items-start sm:items-center gap-2 px-3.5 py-2 rounded-lg bg-slate-50 border border-slate-200 text-xs text-slate-700">
                 <span className="font-semibold text-slate-900 shrink-0 flex items-center gap-1">
@@ -44,7 +60,7 @@ export const AIFinanceBrief: React.FC = () => {
                   Status:
                 </span>
                 <span className="text-slate-600 text-[11px]">
-                  Upload new invoices via the Upload tab to perform automated 3-way matching and risk scanning.
+                  All active documents in this workspace are reconciled with zero pending exceptions.
                 </span>
               </div>
             </div>

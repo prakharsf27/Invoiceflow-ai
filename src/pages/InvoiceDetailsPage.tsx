@@ -176,7 +176,14 @@ export const InvoiceDetailsPage: React.FC = () => {
       const diffHours = Math.round(diffMin / 60);
       if (diffHours === 1) return '1 hour ago';
       if (diffHours < 24) return `${diffHours} hours ago`;
-      return date.toLocaleDateString('en-IN', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+      return date.toLocaleString('en-IN', {
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+        hour12: true,
+      });
     } catch {
       return 'Completed';
     }

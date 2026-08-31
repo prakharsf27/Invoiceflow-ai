@@ -22,7 +22,17 @@ export const DashboardPage: React.FC = () => {
     refreshData,
   } = useApp();
 
-  const formatLakhs = (amt: number) => `₹${(amt / 100000).toFixed(1)}L`;
+  // Re-fetch canonical state on mount
+  React.useEffect(() => {
+    refreshData();
+  }, [refreshData]);
+
+  const formatCurrencyDisplay = (amt: number) => {
+    if (!amt || amt === 0) return '₹0';
+    if (amt >= 100000) return `₹${(amt / 100000).toFixed(1)}L`;
+    return `₹${amt.toLocaleString('en-IN')}`;
+  };
+
   const firstName = user?.name ? user.name.split(' ')[0] : 'there';
 
   return (
@@ -64,9 +74,8 @@ export const DashboardPage: React.FC = () => {
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3.5">
         <MetricCard
           title="Total Payables"
-          value={formatLakhs(totalPayables)}
-          subtext="vs last week"
-          trend={{ value: "+2.1%", isPositive: true }}
+          value={formatCurrencyDisplay(totalPayables)}
+          subtext={totalPayables === 0 ? "Zero outstanding payables" : "Outstanding payables"}
           icon="wallet"
           onClick={() => navigate('/app/payments')}
         />
@@ -74,7 +83,7 @@ export const DashboardPage: React.FC = () => {
         <MetricCard
           title="Invoices Received"
           value={invoicesReceived.toString()}
-          subtext="This week"
+          subtext={invoicesReceived === 0 ? "No invoices ingested" : `${invoicesReceived} active documents`}
           icon="invoices"
           onClick={() => navigate('/app/invoices')}
         />
@@ -82,7 +91,7 @@ export const DashboardPage: React.FC = () => {
         <MetricCard
           title="Need Attention"
           value={needAttentionCount.toString()}
-          subtext="Requires review"
+          subtext={needAttentionCount === 0 ? "Zero pending flags" : "Requires AP review"}
           icon="attention"
           variant="attention"
           onClick={() => navigate('/app/exceptions')}
@@ -90,8 +99,8 @@ export const DashboardPage: React.FC = () => {
 
         <MetricCard
           title="Overdue"
-          value={formatLakhs(overdueAmount)}
-          subtext="Across overdue bills"
+          value={formatCurrencyDisplay(overdueAmount)}
+          subtext={overdueAmount === 0 ? "Zero overdue bills" : "Outstanding overdue"}
           icon="overdue"
           variant="overdue"
           onClick={() => navigate('/app/invoices?filter=overdue')}
@@ -100,7 +109,7 @@ export const DashboardPage: React.FC = () => {
         <MetricCard
           title="Time Saved"
           value={`${timeSavedHours} hrs`}
-          subtext="saved this week"
+          subtext={timeSavedHours === 0 ? "0 hrs automated" : "Autonomous AP savings"}
           icon="time"
           variant="time"
           onClick={() => navigate('/app/reports')}

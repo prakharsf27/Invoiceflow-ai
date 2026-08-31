@@ -8,7 +8,11 @@ import { useApp } from '../context/AppContext';
 
 export const MonitoringPage: React.FC = () => {
   const navigate = useNavigate();
-  const { invoices } = useApp();
+  const { invoices, refreshData } = useApp();
+
+  React.useEffect(() => {
+    refreshData();
+  }, [refreshData]);
 
   // Find risk & security flagged invoices
   const flaggedInvoices = invoices.filter(

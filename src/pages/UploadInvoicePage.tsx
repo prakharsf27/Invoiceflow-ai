@@ -39,7 +39,7 @@ interface StagedFile {
 }
 
 export const UploadInvoicePage: React.FC = () => {
-  const { showToast } = useApp();
+  const { showToast, refreshData } = useApp();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Staging state
@@ -79,6 +79,7 @@ export const UploadInvoicePage: React.FC = () => {
       });
 
       setDocuments(docs);
+      await refreshData();
     } catch (err) {
       console.error('Failed to load documents:', err);
     } finally {
@@ -97,12 +98,13 @@ export const UploadInvoicePage: React.FC = () => {
     );
     if (!hasPendingDocs) return;
 
-    const interval = setInterval(() => {
-      loadCompanyDocuments(false);
+    const interval = setInterval(async () => {
+      await loadCompanyDocuments(false);
+      await refreshData();
     }, 2500);
 
     return () => clearInterval(interval);
-  }, [documents]);
+  }, [documents, refreshData]);
 
   // Deterministic Document Type Guess
   const guessDocumentType = (fileName: string): AppDocumentType => {
@@ -205,6 +207,7 @@ export const UploadInvoicePage: React.FC = () => {
       }
 
       await loadCompanyDocuments();
+      await refreshData();
     } catch (err: any) {
       console.error('Batch upload error:', err);
       showToast(err?.message || 'Failed to upload document batch.', 'error');
@@ -222,6 +225,7 @@ export const UploadInvoicePage: React.FC = () => {
         setSelectedDoc(updated);
         showToast('Document reprocessed & PO matching updated!', 'success');
         await loadCompanyDocuments(false);
+        await refreshData();
       }
     } catch (err: any) {
       showToast(err?.message || 'Failed to reprocess document.', 'error');
@@ -240,12 +244,13 @@ export const UploadInvoicePage: React.FC = () => {
     if (!isoString) return 'N/A';
     try {
       const d = new Date(isoString);
-      return d.toLocaleDateString('en-IN', {
+      return d.toLocaleString('en-IN', {
         month: 'short',
         day: 'numeric',
         year: 'numeric',
-        hour: '2-digit',
+        hour: 'numeric',
         minute: '2-digit',
+        hour12: true,
       });
     } catch {
       return 'N/A';
@@ -259,6 +264,7 @@ export const UploadInvoicePage: React.FC = () => {
       showToast('Document removed from company storage.', 'info');
       setSelectedDoc(null);
       await loadCompanyDocuments();
+      await refreshData();
     } else {
       showToast('Failed to delete document.', 'error');
     }
