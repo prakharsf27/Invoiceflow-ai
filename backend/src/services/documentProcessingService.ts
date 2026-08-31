@@ -7,6 +7,7 @@ import { documentStorageService } from './storage/documentStorageService.js';
 import { documentValidationService } from './documentValidationService.js';
 import { poMatchingService } from './poMatchingService.js';
 import { hybridExtractionService } from './extraction/hybridExtractionService.js';
+import { NormalizationHelper } from './extraction/normalizationHelper.js';
 
 const escapeRegExp = (str: string): string => {
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -336,6 +337,12 @@ class DocumentProcessingService {
           console.warn(`[DocumentProcessingService] Non-blocking supplier auto-sync warning for ${documentId}:`, supErr);
         }
 
+        // Calculate derived due date from payment terms if explicit due date was not in document
+        const calculatedDueDate = NormalizationHelper.calculateDueDateFromTerms(
+          extractedPayload.invoiceDate,
+          extractedPayload.paymentTerms
+        );
+
         // Sync or Create Invoice record in MongoDB scoped to companyId
         const createdInvoice = await InvoiceModel.findOneAndUpdate(
           { companyId, invoiceNumber: new RegExp(`^${invNum.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') },
@@ -347,31 +354,32 @@ class DocumentProcessingService {
               createdBy: userId,
               supplierId,
               supplierName: finalSupplierName,
-              supplierGstin: extractedPayload.supplierGstin || '29AABCS1234F1Z1',
-              supplierEmail: extractedPayload.supplierEmail || 'billing@supplier.com',
-              supplierPhone: extractedPayload.supplierPhone || '+91 99000 00000',
+              supplierGstin: extractedPayload.supplierGstin || null,
+              supplierEmail: extractedPayload.supplierEmail || null,
+              supplierPhone: extractedPayload.supplierPhone || null,
               amount: invTotal,
               currency: extractedPayload.currency || 'INR',
               subtotal: invSubtotal,
               tax: invTax,
               discount: extractedPayload.discount || 0,
-              invoiceDate: extractedPayload.invoiceDate || new Date().toISOString().split('T')[0],
-              dueDate: extractedPayload.dueDate || new Date(Date.now() + 15 * 86400000).toISOString().split('T')[0],
-              poNumber: extractedPayload.poNumber || matchResult?.poNumber,
+              invoiceDate: extractedPayload.invoiceDate || null,
+              dueDate: extractedPayload.dueDate || null,
+              calculatedDueDate: calculatedDueDate || null,
+              poNumber: extractedPayload.poNumber || null,
               aiStatus: isBankChanged ? 'Bank Detail Change' : aiStatus,
               status: isBankChanged ? 'critical' : status,
               paymentStatus: isBankChanged ? 'on_hold' : (status === 'ready' ? 'scheduled' : 'pending'),
               riskLevel: isBankChanged ? 'high' : (status === 'ready' ? 'low' : 'medium'),
-              paymentTerms: extractedPayload.paymentTerms || 'Net 15 Days',
+              paymentTerms: extractedPayload.paymentTerms || null,
               bankDetails: extractedPayload.bankDetails?.accountNumber ? {
                 accountNumber: extractedPayload.bankDetails.accountNumber,
-                ifsc: extractedPayload.bankDetails.ifsc || 'N/A',
-                bankName: extractedPayload.bankDetails.bankName || 'Bank',
+                ifsc: extractedPayload.bankDetails.ifsc || null,
+                bankName: extractedPayload.bankDetails.bankName || null,
                 isChangedFromPrevious: isBankChanged,
               } : {
-                accountNumber: '990011223344',
-                ifsc: 'HDFC0001234',
-                bankName: 'HDFC Bank',
+                accountNumber: null,
+                ifsc: null,
+                bankName: null,
                 isChangedFromPrevious: false,
               },
               items: valRes.processedItems.map((i, idx) => ({

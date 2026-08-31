@@ -802,19 +802,39 @@ export const UploadInvoicePage: React.FC = () => {
                           {selectedDoc.documentType === 'purchase_order' ? 'PO #' : 'Invoice #'}
                         </span>
                         <span className="font-bold text-slate-900">
-                          {selectedDoc.extractedData.poNumber || selectedDoc.extractedData.invoiceNumber || 'N/A'}
+                          {selectedDoc.extractedData.poNumber || selectedDoc.extractedData.invoiceNumber || '—'}
                         </span>
                       </div>
                       <div className="p-3 bg-slate-50 rounded-lg">
                         <span className="text-[11px] text-slate-400 font-medium block">Supplier Name</span>
                         <span className="font-semibold text-slate-900 truncate block">
-                          {selectedDoc.extractedData.supplierName || 'N/A'}
+                          {selectedDoc.extractedData.supplierName || '—'}
                         </span>
                       </div>
                       <div className="p-3 bg-slate-50 rounded-lg">
                         <span className="text-[11px] text-slate-400 font-medium block">Supplier GSTIN</span>
                         <span className="font-mono text-slate-900">
-                          {selectedDoc.extractedData.supplierGstin || 'N/A'}
+                          {selectedDoc.extractedData.supplierGstin || '—'}
+                        </span>
+                      </div>
+                      <div className="p-3 bg-slate-50 rounded-lg">
+                        <span className="text-[11px] text-slate-400 font-medium block">Payment Terms</span>
+                        <span className="font-medium text-slate-900 truncate block">
+                          {selectedDoc.extractedData.paymentTerms || '—'}
+                        </span>
+                      </div>
+                      <div className="p-3 bg-slate-50 rounded-lg">
+                        <span className="text-[11px] text-slate-400 font-medium block">Payment Due Date</span>
+                        <span className="font-medium text-slate-900 block">
+                          {selectedDoc.extractedData.dueDate || '—'}
+                        </span>
+                      </div>
+                      <div className="p-3 bg-slate-50 rounded-lg">
+                        <span className="text-[11px] text-slate-400 font-medium block">Bank Account</span>
+                        <span className="font-mono text-[11px] text-slate-900 truncate block">
+                          {selectedDoc.extractedData.bankDetails?.accountNumber
+                            ? `${selectedDoc.extractedData.bankDetails.accountNumber} (${selectedDoc.extractedData.bankDetails.bankName || 'Bank'})`
+                            : '—'}
                         </span>
                       </div>
                       <div className="p-3 bg-slate-50 rounded-lg">

@@ -490,15 +490,15 @@ export const InvoiceDetailsPage: React.FC = () => {
               <div className="space-y-2 text-xs">
                 <div className="flex justify-between py-1 border-b border-slate-100">
                   <span className="text-slate-500">Invoice Date</span>
-                  <span className="font-medium text-slate-900">{invoice.invoiceDate}</span>
+                  <span className="font-medium text-slate-900">{invoice.invoiceDate || '—'}</span>
                 </div>
                 <div className="flex justify-between py-1 border-b border-slate-100">
                   <span className="text-slate-500">Payment Due Date</span>
-                  <span className="font-medium text-slate-900">{invoice.dueDate}</span>
+                  <span className="font-medium text-slate-900">{invoice.dueDate || '—'}</span>
                 </div>
                 <div className="flex justify-between py-1 border-b border-slate-100">
                   <span className="text-slate-500">Payment Terms</span>
-                  <span className="font-medium text-slate-900">{invoice.paymentTerms}</span>
+                  <span className="font-medium text-slate-900">{invoice.paymentTerms || '—'}</span>
                 </div>
                 <div className="flex justify-between py-1">
                   <span className="text-slate-500">Purchase Order</span>
@@ -514,20 +514,20 @@ export const InvoiceDetailsPage: React.FC = () => {
               <div className="space-y-2 text-xs">
                 <div className="flex justify-between py-1 border-b border-slate-100">
                   <span className="text-slate-500">GSTIN</span>
-                  <span className="font-mono font-medium text-slate-900">{invoice.supplierGstin}</span>
+                  <span className="font-mono font-medium text-slate-900">{invoice.supplierGstin || '—'}</span>
                 </div>
                 <div className="flex justify-between py-1 border-b border-slate-100">
                   <span className="text-slate-500">Email</span>
-                  <span className="font-medium text-slate-900">{invoice.supplierEmail}</span>
+                  <span className="font-medium text-slate-900">{invoice.supplierEmail || '—'}</span>
                 </div>
                 <div className="flex justify-between py-1 border-b border-slate-100">
                   <span className="text-slate-500">Phone</span>
-                  <span className="font-medium text-slate-900">{invoice.supplierPhone}</span>
+                  <span className="font-medium text-slate-900">{invoice.supplierPhone || '—'}</span>
                 </div>
                 <div className="flex justify-between py-1">
                   <span className="text-slate-500">Bank Account</span>
                   <span className={`font-mono text-[11px] ${invoice.bankDetails?.isChangedFromPrevious ? 'text-rose-600 font-bold' : 'text-slate-700'}`}>
-                    {invoice.bankDetails?.accountNumber} ({invoice.bankDetails?.bankName?.split(',')[0] || 'Bank'})
+                    {invoice.bankDetails?.accountNumber ? `${invoice.bankDetails.accountNumber} (${invoice.bankDetails.bankName?.split(',')[0] || 'Bank'})` : '—'}
                   </span>
                 </div>
               </div>

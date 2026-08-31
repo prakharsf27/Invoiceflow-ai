@@ -51,26 +51,27 @@ export interface IInvoiceDocument extends Document {
   invoiceNumber: string;
   supplierId: string;
   supplierName: string;
-  supplierGstin: string;
-  supplierEmail: string;
-  supplierPhone: string;
+  supplierGstin?: string | null;
+  supplierEmail?: string | null;
+  supplierPhone?: string | null;
   amount: number;
   currency: string;
   subtotal: number;
   tax: number;
   discount: number;
   invoiceDate: string;
-  dueDate: string;
-  poNumber?: string;
+  dueDate?: string | null;
+  calculatedDueDate?: string | null;
+  poNumber?: string | null;
   aiStatus: string;
   status: string;
   paymentStatus: string;
   riskLevel: string;
-  paymentTerms: string;
-  bankDetails: {
-    accountNumber: string;
-    ifsc: string;
-    bankName: string;
+  paymentTerms?: string | null;
+  bankDetails?: {
+    accountNumber?: string | null;
+    ifsc?: string | null;
+    bankName?: string | null;
     isChangedFromPrevious?: boolean;
     previousAccountNumber?: string;
   };
@@ -94,26 +95,27 @@ const InvoiceSchema = new Schema<IInvoiceDocument>(
     createdBy: { type: String },
     supplierId: { type: String, required: true },
     supplierName: { type: String, required: true },
-    supplierGstin: { type: String, required: true },
-    supplierEmail: { type: String, required: true },
-    supplierPhone: { type: String, required: true },
+    supplierGstin: { type: String },
+    supplierEmail: { type: String },
+    supplierPhone: { type: String },
     amount: { type: Number, required: true },
     currency: { type: String, default: 'INR' },
     subtotal: { type: Number, required: true },
     tax: { type: Number, required: true },
     discount: { type: Number, default: 0 },
     invoiceDate: { type: String, required: true },
-    dueDate: { type: String, required: true },
+    dueDate: { type: String },
+    calculatedDueDate: { type: String },
     poNumber: { type: String },
     aiStatus: { type: String, required: true },
     status: { type: String, required: true, index: true },
     paymentStatus: { type: String, required: true },
     riskLevel: { type: String, required: true },
-    paymentTerms: { type: String, default: 'Net 15 Days' },
+    paymentTerms: { type: String },
     bankDetails: {
-      accountNumber: { type: String, required: true },
-      ifsc: { type: String, required: true },
-      bankName: { type: String, required: true },
+      accountNumber: { type: String },
+      ifsc: { type: String },
+      bankName: { type: String },
       isChangedFromPrevious: { type: Boolean, default: false },
       previousAccountNumber: { type: String },
     },

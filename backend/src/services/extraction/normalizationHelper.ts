@@ -127,7 +127,7 @@ export class NormalizationHelper {
 
   /**
    * Normalize numeric monetary amounts.
-   * Strips currency symbols (₹, n, Rs., $, €, etc.) and comma separators.
+   * Strips currency symbols (₹, n, Rs., $, €, etc.), PDF artifact glyphs (■, ▪, ●, \uFFFD, \u25A0), and comma separators.
    */
   public static normalizeAmount(raw: string | number | null | undefined): number | null {
     if (raw === null || raw === undefined) return null;
@@ -139,11 +139,13 @@ export class NormalizationHelper {
     let str = raw.trim();
     if (!str) return null;
 
-    // Remove currency prefixes/symbols: "n", "₹", "Rs.", "INR", "$", "USD", etc.
-    str = str.replace(/^[n₹$€£\s]+/i, '');
+    // Remove PDF artifact glyphs and currency symbols: ■, ▪, ●, \uFFFD, \u25A0, \u25AA, ₹, $, €, £
+    str = str.replace(/[\u25A0\u25AA\uFFFD■▪●₹$€£]/g, ' ');
+    str = str.replace(/\b[nN](?=\d)/g, '');
     str = str.replace(/^(?:inr|rs\.?|usd|eur|gbp)\s*/i, '');
-    // Remove all commas
-    str = str.replace(/,/g, '');
+    // Remove all commas and extra whitespace
+    str = str.replace(/,/g, '').trim();
+
     // Extract first valid numeric string with optional decimals
     const numMatch = str.match(/-?\d+(?:\.\d+)?/);
     if (!numMatch) return null;
@@ -152,6 +154,26 @@ export class NormalizationHelper {
     if (isNaN(parsed) || !isFinite(parsed)) return null;
 
     return Math.round(parsed * 100) / 100;
+  }
+
+  /**
+   * Calculate derived due date from invoice date and payment terms (e.g. "Net 30 Days").
+   * Stored separately as calculatedDueDate to avoid fabricating extracted dueDate.
+   */
+  public static calculateDueDateFromTerms(invoiceDate: string | null | undefined, terms: string | null | undefined): string | null {
+    if (!invoiceDate || !terms) return null;
+    const normDate = this.normalizeDate(invoiceDate);
+    if (!normDate) return null;
+
+    const daysMatch = terms.match(/net\s*(\d+)/i);
+    if (daysMatch) {
+      const days = parseInt(daysMatch[1], 10);
+      const d = new Date(normDate);
+      if (isNaN(d.getTime())) return null;
+      d.setDate(d.getDate() + days);
+      return d.toISOString().split('T')[0];
+    }
+    return null;
   }
 
   /**
