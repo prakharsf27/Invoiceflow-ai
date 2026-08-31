@@ -211,7 +211,7 @@ export interface PurchaseOrder {
   issuedDate: string;
   status: 'matched' | 'mismatch' | 'partial' | 'open';
   invoiceId?: string;
-  matchStatus?: 'matched' | 'mismatch' | 'partial';
+  matchStatus?: 'matched' | 'mismatch' | 'partial' | 'partial_match' | 'open';
   items: {
     id: string;
     description: string;

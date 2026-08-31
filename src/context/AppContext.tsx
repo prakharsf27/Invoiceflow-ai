@@ -185,12 +185,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // Derived POs connected to invoices
   const purchaseOrders: PurchaseOrder[] = useMemo(() => {
     return poData.map((po) => {
-      const inv = invoices.find((i) => i.poNumber === po.poNumber);
+      const inv = invoices.find(
+        (i) => (i.poNumber && i.poNumber.trim().toLowerCase() === po.poNumber.trim().toLowerCase()) || i.id === po.invoiceId
+      );
       if (inv) {
-        const hasMismatch = inv.aiChecks?.some((c) => !c.passed && c.type === 'critical');
+        let matchStatus: PurchaseOrder['matchStatus'] = po.matchStatus || 'matched';
+        if (po.matchStatus === 'open' || !po.matchStatus) {
+          if (inv.status === 'ready' || inv.aiStatus === 'Ready') {
+            matchStatus = 'matched';
+          } else if (inv.aiStatus === 'PO Mismatch' || Math.abs(inv.amount - po.totalAmount) > 2.0) {
+            matchStatus = 'mismatch';
+          } else {
+            matchStatus = 'matched';
+          }
+        }
         return {
           ...po,
-          matchStatus: hasMismatch ? 'mismatch' : 'matched',
+          matchStatus,
           invoiceId: inv.id,
         };
       }

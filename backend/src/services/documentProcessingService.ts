@@ -425,6 +425,23 @@ class DocumentProcessingService {
         );
 
         linkedRecordId = createdInvoice?.id || createdInvoice?._id?.toString();
+
+        // Synchronize PurchaseOrderModel matchStatus & invoiceId
+        if (matchResult && matchResult.poNumber) {
+          try {
+            await PurchaseOrderModel.updateOne(
+              { companyId, poNumber: new RegExp(`^${matchResult.poNumber.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') },
+              {
+                $set: {
+                  matchStatus: matchResult.matchStatus,
+                  invoiceId: linkedRecordId,
+                },
+              }
+            );
+          } catch (poSyncErr: any) {
+            console.warn('[DocumentProcessingService] PO sync warning (non-blocking):', poSyncErr?.message);
+          }
+        }
       }
 
       // Update Document record status atomically

@@ -89,9 +89,11 @@ export const POMatchingPage: React.FC = () => {
         <div className="space-y-4">
           {filteredPOs.map((po) => {
             const linkedInvoice = invoices.find((i) => i.poNumber === po.poNumber || i.id === po.invoiceId);
-            const isMismatch = po.matchStatus === 'mismatch';
             const invAmount = linkedInvoice ? linkedInvoice.amount : 0;
             const variance = linkedInvoice ? invAmount - po.totalAmount : 0;
+            const isAmountMatched = linkedInvoice ? Math.abs(variance) <= 2.0 : false;
+            const isMatched = po.matchStatus === 'matched' && isAmountMatched;
+            const isMismatch = po.matchStatus === 'mismatch' || (linkedInvoice && !isAmountMatched);
 
             return (
               <Card key={po.id || po.poNumber} className="p-6 border-slate-200/90 space-y-6 shadow-sm">
@@ -101,10 +103,14 @@ export const POMatchingPage: React.FC = () => {
                       <h2 className="text-base font-bold text-slate-900">
                         {po.supplierName} Reconciliation
                       </h2>
-                      {isMismatch ? (
-                        <Badge variant="danger" size="sm" dot>PO MISMATCH DETECTED</Badge>
-                      ) : (
+                      {isMatched ? (
                         <Badge variant="success" size="sm" dot>100% PO MATCHED</Badge>
+                      ) : isMismatch ? (
+                        <Badge variant="danger" size="sm" dot>PO MISMATCH DETECTED</Badge>
+                      ) : po.matchStatus === 'partial_match' ? (
+                        <Badge variant="warning" size="sm" dot>PARTIAL PO MATCH</Badge>
+                      ) : (
+                        <Badge variant="neutral" size="sm" dot>PENDING INVOICE</Badge>
                       )}
                     </div>
                     <p className="text-xs text-slate-500 mt-0.5">
@@ -161,15 +167,17 @@ export const POMatchingPage: React.FC = () => {
                     </div>
                   </div>
 
-                  <div className={`p-4 rounded-xl border ${variance > 0 ? 'bg-rose-50/70 border-rose-200' : 'bg-emerald-50/70 border-emerald-200'}`}>
-                    <span className={`text-xs font-semibold uppercase tracking-wider block mb-1 ${variance > 0 ? 'text-rose-700' : 'text-emerald-700'}`}>
+                  <div className={`p-4 rounded-xl border ${!isAmountMatched ? 'bg-rose-50/70 border-rose-200' : 'bg-emerald-50/70 border-emerald-200'}`}>
+                    <span className={`text-xs font-semibold uppercase tracking-wider block mb-1 ${!isAmountMatched ? 'text-rose-700' : 'text-emerald-700'}`}>
                       Variance / Discrepancy
                     </span>
-                    <div className={`text-sm font-semibold mb-1 ${variance > 0 ? 'text-rose-600' : 'text-emerald-600'}`}>
-                      {variance > 0 ? `+${((variance / po.totalAmount) * 100).toFixed(1)}% Overrun` : '0% Match'}
+                    <div className={`text-sm font-semibold mb-1 ${!isAmountMatched ? 'text-rose-600' : 'text-emerald-600'}`}>
+                      {isAmountMatched
+                        ? '100% Match (0% Variance)'
+                        : (variance > 0 ? `+${((variance / po.totalAmount) * 100).toFixed(1)}% Overrun` : `-${((Math.abs(variance) / po.totalAmount) * 100).toFixed(1)}% Underrun`)}
                     </div>
-                    <div className={`text-2xl font-extrabold tabular-nums ${variance > 0 ? 'text-rose-700' : 'text-emerald-700'}`}>
-                      {variance >= 0 ? `+₹${variance.toLocaleString('en-IN')}` : `-₹${Math.abs(variance).toLocaleString('en-IN')}`}
+                    <div className={`text-2xl font-extrabold tabular-nums ${!isAmountMatched ? 'text-rose-700' : 'text-emerald-700'}`}>
+                      {isAmountMatched ? '₹0' : (variance >= 0 ? `+₹${variance.toLocaleString('en-IN')}` : `-₹${Math.abs(variance).toLocaleString('en-IN')}`)}
                     </div>
                   </div>
                 </div>

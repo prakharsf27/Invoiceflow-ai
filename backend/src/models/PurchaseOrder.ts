@@ -13,6 +13,7 @@ export interface IPurchaseOrderDocument extends Document {
   poNumber: string;
   supplierId: string;
   supplierName: string;
+  supplierGstin?: string;
   totalAmount: number;
   issuedDate: string;
   status: string;
@@ -29,6 +30,7 @@ const PurchaseOrderSchema = new Schema<IPurchaseOrderDocument>(
     poNumber: { type: String, required: true, index: true },
     supplierId: { type: String, required: true },
     supplierName: { type: String, required: true },
+    supplierGstin: { type: String },
     totalAmount: { type: Number, required: true },
     issuedDate: { type: String, required: true },
     status: { type: String, required: true },
