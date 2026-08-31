@@ -251,64 +251,81 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // Handlers communicating with backend APIs
   const updateInvoiceStatus = async (id: string, newStatus: InvoiceStatus) => {
-    const isApproved = newStatus === 'ready' || newStatus === 'paid';
-    const isHold = newStatus === 'hold' || newStatus === 'on_hold';
-
-    // Optimistic UI state update
-    setInvoices((prev) =>
-      prev.map((inv) => {
-        if (inv.id === id || inv.invoiceNumber.toLowerCase() === id.toLowerCase()) {
-          return {
-            ...inv,
-            status: newStatus,
-            aiStatus: isApproved ? 'Approved' : isHold ? 'On Hold' : inv.aiStatus,
-            paymentStatus: isApproved ? 'scheduled' : isHold ? 'on_hold' : inv.paymentStatus,
-            riskLevel: isApproved ? 'low' : inv.riskLevel,
-            aiChecks: (inv.aiChecks || []).map((c) => ({ ...c, passed: isApproved ? true : c.passed })),
-          };
-        }
-        return inv;
-      })
-    );
-
-    // Persist to backend
     try {
-      await invoiceService.updateInvoiceStatus(id, newStatus);
-    } catch (err) {
+      const updated = await invoiceService.updateInvoiceStatus(id, newStatus);
+      if (updated) {
+        setInvoices((prev) =>
+          prev.map((inv) =>
+            inv.id === updated.id || inv.invoiceNumber.toLowerCase() === updated.invoiceNumber.toLowerCase()
+              ? updated
+              : inv
+          )
+        );
+        await fetchAllBackendData();
+      }
+    } catch (err: any) {
       console.error(`Backend sync failed for invoice ${id}:`, err);
+      showToast(err?.message || `Failed to update invoice status for ${id}.`, 'error');
+      throw err;
     }
   };
 
   const approveInvoice = async (id: string) => {
-    const target = invoices.find((i) => i.id === id || i.invoiceNumber.toLowerCase() === id.toLowerCase());
-    if (!target) return;
+    try {
+      const updated = await invoiceService.approveInvoice(id);
+      
+      setInvoices((prev) =>
+        prev.map((inv) =>
+          inv.id === updated.id || inv.invoiceNumber.toLowerCase() === updated.invoiceNumber.toLowerCase()
+            ? updated
+            : inv
+        )
+      );
 
-    await updateInvoiceStatus(id, 'ready');
-    showToast(`Invoice ${target.invoiceNumber} approved & queued for payment!`, 'success');
+      // Resolve associated notification
+      setNotifications((prev) =>
+        prev.map((n) => (n.invoiceId === updated.id || n.invoiceId === id ? { ...n, read: true } : n))
+      );
 
-    // Resolve associated notification
-    setNotifications((prev) =>
-      prev.map((n) => (n.invoiceId === target.id ? { ...n, read: true } : n))
-    );
+      await fetchAllBackendData();
+      showToast(`Invoice ${updated.invoiceNumber} approved & queued for payment!`, 'success');
+    } catch (err: any) {
+      console.error(`Failed to approve invoice ${id}:`, err);
+      showToast(err?.message || `Failed to approve invoice ${id}.`, 'error');
+    }
   };
 
   const holdInvoice = async (id: string) => {
-    const target = invoices.find((i) => i.id === id || i.invoiceNumber.toLowerCase() === id.toLowerCase());
-    if (!target) return;
+    try {
+      const updated = await invoiceService.holdInvoice(id);
+      
+      setInvoices((prev) =>
+        prev.map((inv) =>
+          inv.id === updated.id || inv.invoiceNumber.toLowerCase() === updated.invoiceNumber.toLowerCase()
+            ? updated
+            : inv
+        )
+      );
 
-    await updateInvoiceStatus(id, 'hold');
-    showToast(`Invoice ${target.invoiceNumber} placed on Hold!`, 'warning');
+      await fetchAllBackendData();
+      showToast(`Invoice ${updated.invoiceNumber} placed on Hold!`, 'warning');
+    } catch (err: any) {
+      console.error(`Failed to place invoice on hold ${id}:`, err);
+      showToast(err?.message || `Failed to place invoice ${id} on hold.`, 'error');
+    }
   };
 
   const resolveException = async (exceptionId: string, invoiceId?: string) => {
     try {
       await exceptionService.resolveException(exceptionId);
       if (invoiceId) {
-        await updateInvoiceStatus(invoiceId, 'ready');
+        await invoiceService.approveInvoice(invoiceId).catch(() => null);
       }
+      await fetchAllBackendData();
       showToast(`Exception ${exceptionId} resolved`, 'success');
-    } catch (err) {
+    } catch (err: any) {
       console.error(`Failed to resolve exception ${exceptionId}:`, err);
+      showToast(err?.message || `Failed to resolve exception ${exceptionId}`, 'error');
     }
   };
 
@@ -321,65 +338,31 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       });
       showToast(`Payment ${paymentId} status updated to ${status}`, 'info');
       await fetchAllBackendData();
-    } catch (err) {
+    } catch (err: any) {
       console.error(`Failed to update payment ${paymentId}:`, err);
+      showToast(err?.message || `Failed to update payment ${paymentId}`, 'error');
     }
   };
 
   const acceptPOVariance = async (poNumberOrId: string, invoiceId?: string): Promise<void> => {
-    // Optimistic UI state update
-    setPoData((prev) =>
-      prev.map((po) =>
-        po.id === poNumberOrId || po.poNumber.toLowerCase() === poNumberOrId.toLowerCase()
-          ? { ...po, matchStatus: 'matched', status: 'matched' }
-          : po
-      )
-    );
-    if (invoiceId) {
-      setInvoices((prev) =>
-        prev.map((inv) =>
-          inv.id === invoiceId || inv.invoiceNumber.toLowerCase() === invoiceId.toLowerCase()
-            ? { ...inv, status: 'ready', aiStatus: 'Variance Accepted', paymentStatus: 'scheduled', riskLevel: 'low' }
-            : inv
-        )
-      );
-    }
-
     try {
       await poService.acceptVariance(poNumberOrId, invoiceId);
-      showToast(`Variance accepted for PO ${poNumberOrId}!`, 'success');
       await fetchAllBackendData();
-    } catch (err) {
+      showToast(`Variance accepted for PO ${poNumberOrId}! Reconciled & queued for payment.`, 'success');
+    } catch (err: any) {
       console.error(`Failed to accept variance for PO ${poNumberOrId}:`, err);
-      showToast('Failed to persist variance acceptance to backend.', 'error');
+      showToast(err?.message || 'Failed to persist variance acceptance to backend.', 'error');
     }
   };
 
   const requestPOClarification = async (poNumberOrId: string, invoiceId?: string, reason?: string): Promise<void> => {
-    setPoData((prev) =>
-      prev.map((po) =>
-        po.id === poNumberOrId || po.poNumber.toLowerCase() === poNumberOrId.toLowerCase()
-          ? { ...po, matchStatus: 'mismatch', status: 'mismatch' }
-          : po
-      )
-    );
-    if (invoiceId) {
-      setInvoices((prev) =>
-        prev.map((inv) =>
-          inv.id === invoiceId || inv.invoiceNumber.toLowerCase() === invoiceId.toLowerCase()
-            ? { ...inv, status: 'hold', aiStatus: 'On Hold', paymentStatus: 'on_hold' }
-            : inv
-        )
-      );
-    }
-
     try {
       await poService.requestClarification(poNumberOrId, invoiceId, reason);
-      showToast(`Clarification requested for PO ${poNumberOrId}!`, 'warning');
       await fetchAllBackendData();
-    } catch (err) {
+      showToast(`Clarification requested for PO ${poNumberOrId}!`, 'warning');
+    } catch (err: any) {
       console.error(`Failed to request clarification for PO ${poNumberOrId}:`, err);
-      showToast('Failed to persist clarification request to backend.', 'error');
+      showToast(err?.message || 'Failed to persist clarification request to backend.', 'error');
     }
   };
 

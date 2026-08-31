@@ -10,9 +10,9 @@ import {
 const router = Router();
 
 router.get('/', getPurchaseOrders);
-router.get('/:id', getPOById);
-router.patch('/:id', updatePO);
 router.patch('/:id/accept-variance', acceptPOVariance);
 router.patch('/:id/request-clarification', requestPOClarification);
+router.get('/:id', getPOById);
+router.patch('/:id', updatePO);
 
 export default router;

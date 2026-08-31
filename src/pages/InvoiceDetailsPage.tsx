@@ -445,7 +445,8 @@ export const InvoiceDetailsPage: React.FC = () => {
         <div className="flex flex-wrap items-center gap-2">
           <Button
             onClick={async () => {
-              await approveInvoice(invoice.id);
+              const targetId = invoice.id || (invoice as any)._id || invoice.invoiceNumber;
+              await approveInvoice(targetId);
             }}
             variant="primary"
             size="sm"
@@ -456,7 +457,8 @@ export const InvoiceDetailsPage: React.FC = () => {
           </Button>
           <Button
             onClick={async () => {
-              await holdInvoice(invoice.id);
+              const targetId = invoice.id || (invoice as any)._id || invoice.invoiceNumber;
+              await holdInvoice(targetId);
             }}
             variant="outline"
             size="sm"

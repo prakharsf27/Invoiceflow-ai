@@ -2,6 +2,24 @@ import { Request, Response } from 'express';
 import { PurchaseOrderModel } from '../models/PurchaseOrder.js';
 import { InvoiceModel } from '../models/Invoice.js';
 import { DocumentModel } from '../models/Document.js';
+import { PaymentModel } from '../models/Payment.js';
+
+const buildPOLookupQuery = (companyId: string, id: string) => {
+  const cleanId = decodeURIComponent(id).trim();
+  const isValidObjectId = /^[0-9a-fA-F]{24}$/.test(cleanId);
+  const escaped = cleanId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+  const conditions: any[] = [
+    { id: cleanId },
+    { poNumber: new RegExp(`^${escaped}$`, 'i') },
+  ];
+
+  if (isValidObjectId) {
+    conditions.push({ _id: cleanId });
+  }
+
+  return { companyId, $or: conditions };
+};
 
 // GET /api/purchase-orders
 export const getPurchaseOrders = async (req: Request, res: Response): Promise<void> => {
@@ -19,13 +37,11 @@ export const getPOById = async (req: Request, res: Response): Promise<void> => {
   try {
     const companyId = req.user?.companyId || 'company-demo-01';
     const id = String(req.params.id);
-    const po = await PurchaseOrderModel.findOne({
-      companyId,
-      $or: [{ id }, { poNumber: new RegExp(`^${id}$`, 'i') }],
-    } as any);
+    const query = buildPOLookupQuery(companyId, id);
+    const po = await PurchaseOrderModel.findOne(query as any);
 
     if (!po) {
-      res.status(404).json({ success: false, message: 'Purchase Order not found' });
+      res.status(404).json({ success: false, message: `Purchase Order "${id}" not found.` });
       return;
     }
 
@@ -41,18 +57,16 @@ export const updatePO = async (req: Request, res: Response): Promise<void> => {
     const companyId = req.user?.companyId || 'company-demo-01';
     const id = String(req.params.id);
     const updates = req.body;
+    const query = buildPOLookupQuery(companyId, id);
 
     const po = await PurchaseOrderModel.findOneAndUpdate(
-      {
-        companyId,
-        $or: [{ id }, { poNumber: new RegExp(`^${id}$`, 'i') }],
-      } as any,
+      query as any,
       { $set: updates },
       { returnDocument: 'after' }
     );
 
     if (!po) {
-      res.status(404).json({ success: false, message: 'Purchase Order not found' });
+      res.status(404).json({ success: false, message: `Purchase Order "${id}" not found.` });
       return;
     }
 
@@ -68,13 +82,11 @@ export const acceptPOVariance = async (req: Request, res: Response): Promise<voi
     const companyId = req.user?.companyId || 'company-demo-01';
     const id = String(req.params.id);
     const { invoiceId } = req.body;
+    const query = buildPOLookupQuery(companyId, id);
 
     // 1. Update Purchase Order in MongoDB
     const po = await PurchaseOrderModel.findOneAndUpdate(
-      {
-        companyId,
-        $or: [{ id }, { poNumber: new RegExp(`^${id}$`, 'i') }],
-      } as any,
+      query as any,
       {
         $set: {
           matchStatus: 'matched',
@@ -88,18 +100,30 @@ export const acceptPOVariance = async (req: Request, res: Response): Promise<voi
     );
 
     if (!po) {
-      res.status(404).json({ success: false, message: 'Purchase Order not found' });
+      res.status(404).json({ success: false, message: `Purchase Order "${id}" not found.` });
       return;
     }
 
     // 2. Find and update associated Invoice in MongoDB
     let updatedInvoice: any = null;
     const invQueryConditions: any[] = [];
+
     if (invoiceId) {
-      invQueryConditions.push({ id: invoiceId }, { invoiceNumber: new RegExp(`^${invoiceId}$`, 'i') });
+      const cleanInvId = decodeURIComponent(String(invoiceId)).trim();
+      const isValidInvoiceObjectId = /^[0-9a-fA-F]{24}$/.test(cleanInvId);
+      const escapedInv = cleanInvId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      invQueryConditions.push({ id: cleanInvId }, { invoiceNumber: new RegExp(`^${escapedInv}$`, 'i') });
+      if (isValidInvoiceObjectId) {
+        invQueryConditions.push({ _id: cleanInvId });
+      }
     }
     if (po.invoiceId) {
-      invQueryConditions.push({ id: po.invoiceId });
+      const cleanPoInvId = decodeURIComponent(String(po.invoiceId)).trim();
+      const isValidPoInvObjectId = /^[0-9a-fA-F]{24}$/.test(cleanPoInvId);
+      invQueryConditions.push({ id: cleanPoInvId });
+      if (isValidPoInvObjectId) {
+        invQueryConditions.push({ _id: cleanPoInvId });
+      }
     }
     invQueryConditions.push({ poNumber: new RegExp(`^${po.poNumber.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') });
 
@@ -126,7 +150,7 @@ export const acceptPOVariance = async (req: Request, res: Response): Promise<voi
         $or: [
           { 'extractedData.poNumber': new RegExp(`^${po.poNumber.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') },
           { linkedRecordId: po.id },
-          { linkedRecordId: updatedInvoice?.id },
+          ...(updatedInvoice ? [{ linkedRecordId: updatedInvoice.id }] : []),
         ],
       } as any,
       {
@@ -136,6 +160,36 @@ export const acceptPOVariance = async (req: Request, res: Response): Promise<voi
         },
       }
     );
+
+    // 4. Synchronize payment record if linked invoice is found
+    if (updatedInvoice) {
+      try {
+        await PaymentModel.findOneAndUpdate(
+          {
+            companyId,
+            $or: [{ invoiceId: updatedInvoice.id }, { invoiceNumber: updatedInvoice.invoiceNumber }],
+          } as any,
+          {
+            $set: {
+              companyId,
+              invoiceId: updatedInvoice.id,
+              invoiceNumber: updatedInvoice.invoiceNumber,
+              supplierName: updatedInvoice.supplierName,
+              amount: updatedInvoice.amount,
+              dueDate: updatedInvoice.dueDate || updatedInvoice.invoiceDate || new Date().toISOString().split('T')[0],
+              status: 'scheduled',
+              poNumber: po.poNumber,
+            },
+            $setOnInsert: {
+              id: `pay-${updatedInvoice.id || Date.now()}`,
+            },
+          },
+          { upsert: true, returnDocument: 'after' }
+        );
+      } catch (payErr) {
+        console.warn('Payment record sync on accept variance warning:', payErr);
+      }
+    }
 
     console.log(`[PO-ACTION] Variance accepted for PO ${po.poNumber}, linked invoice: ${updatedInvoice?.invoiceNumber || 'N/A'}`);
 
@@ -159,12 +213,10 @@ export const requestPOClarification = async (req: Request, res: Response): Promi
     const companyId = req.user?.companyId || 'company-demo-01';
     const id = String(req.params.id);
     const { invoiceId, reason } = req.body;
+    const query = buildPOLookupQuery(companyId, id);
 
     const po = await PurchaseOrderModel.findOneAndUpdate(
-      {
-        companyId,
-        $or: [{ id }, { poNumber: new RegExp(`^${id}$`, 'i') }],
-      } as any,
+      query as any,
       {
         $set: {
           matchStatus: 'mismatch',
@@ -178,17 +230,28 @@ export const requestPOClarification = async (req: Request, res: Response): Promi
     );
 
     if (!po) {
-      res.status(404).json({ success: false, message: 'Purchase Order not found' });
+      res.status(404).json({ success: false, message: `Purchase Order "${id}" not found.` });
       return;
     }
 
     let updatedInvoice: any = null;
     const invQueryConditions: any[] = [];
     if (invoiceId) {
-      invQueryConditions.push({ id: invoiceId }, { invoiceNumber: new RegExp(`^${invoiceId}$`, 'i') });
+      const cleanInvId = decodeURIComponent(String(invoiceId)).trim();
+      const isValidInvoiceObjectId = /^[0-9a-fA-F]{24}$/.test(cleanInvId);
+      const escapedInv = cleanInvId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      invQueryConditions.push({ id: cleanInvId }, { invoiceNumber: new RegExp(`^${escapedInv}$`, 'i') });
+      if (isValidInvoiceObjectId) {
+        invQueryConditions.push({ _id: cleanInvId });
+      }
     }
     if (po.invoiceId) {
-      invQueryConditions.push({ id: po.invoiceId });
+      const cleanPoInvId = decodeURIComponent(String(po.invoiceId)).trim();
+      const isValidPoInvObjectId = /^[0-9a-fA-F]{24}$/.test(cleanPoInvId);
+      invQueryConditions.push({ id: cleanPoInvId });
+      if (isValidPoInvObjectId) {
+        invQueryConditions.push({ _id: cleanPoInvId });
+      }
     }
     invQueryConditions.push({ poNumber: new RegExp(`^${po.poNumber.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') });
 
@@ -206,6 +269,20 @@ export const requestPOClarification = async (req: Request, res: Response): Promi
       },
       { returnDocument: 'after' }
     );
+
+    if (updatedInvoice) {
+      try {
+        await PaymentModel.updateMany(
+          {
+            companyId,
+            $or: [{ invoiceId: updatedInvoice.id }, { invoiceNumber: updatedInvoice.invoiceNumber }],
+          } as any,
+          { $set: { status: 'on_hold' } }
+        );
+      } catch (payErr) {
+        console.warn('Payment hold sync on request clarification warning:', payErr);
+      }
+    }
 
     console.log(`[PO-ACTION] Clarification requested for PO ${po.poNumber}, linked invoice: ${updatedInvoice?.invoiceNumber || 'N/A'}`);
 

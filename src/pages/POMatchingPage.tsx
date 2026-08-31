@@ -172,22 +172,30 @@ export const POMatchingPage: React.FC = () => {
                   {isMismatch && (
                     <div className="flex items-center gap-2">
                       <Button
-                        onClick={() => handleAcceptVariance(po.poNumber, linkedInvoice?.id)}
-                        disabled={actionLoading === `accept-${po.poNumber}`}
+                        onClick={() => {
+                          const poKey = po.poNumber || po.id;
+                          const invKey = linkedInvoice?.id || (linkedInvoice as any)?._id || linkedInvoice?.invoiceNumber;
+                          handleAcceptVariance(poKey, invKey);
+                        }}
+                        disabled={actionLoading === `accept-${po.poNumber || po.id}`}
                         variant="outline"
                         size="sm"
                         className="cursor-pointer"
                       >
-                        {actionLoading === `accept-${po.poNumber}` ? 'Accepting...' : 'Accept Variance'}
+                        {actionLoading === `accept-${po.poNumber || po.id}` ? 'Accepting...' : 'Accept Variance'}
                       </Button>
                       <Button
-                        onClick={() => handleRequestClarification(po.poNumber, linkedInvoice?.id)}
-                        disabled={actionLoading === `clarify-${po.poNumber}`}
+                        onClick={() => {
+                          const poKey = po.poNumber || po.id;
+                          const invKey = linkedInvoice?.id || (linkedInvoice as any)?._id || linkedInvoice?.invoiceNumber;
+                          handleRequestClarification(poKey, invKey);
+                        }}
+                        disabled={actionLoading === `clarify-${po.poNumber || po.id}`}
                         variant="brand"
                         size="sm"
                         className="cursor-pointer"
                       >
-                        {actionLoading === `clarify-${po.poNumber}` ? 'Requesting...' : 'Request Clarification'}
+                        {actionLoading === `clarify-${po.poNumber || po.id}` ? 'Requesting...' : 'Request Clarification'}
                       </Button>
                     </div>
                   )}
