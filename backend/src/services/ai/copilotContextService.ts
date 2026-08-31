@@ -45,54 +45,60 @@ class CopilotContextService {
     const q = (question || '').toLowerCase().trim();
 
     // 1. Fetch Company Summary Metrics from MongoDB (Scoped to companyId)
-    const allInvoices = await InvoiceModel.find({ companyId });
+    const rawInvoices = await InvoiceModel.find({ companyId });
+    const allInvoices = (rawInvoices || []).filter(Boolean);
     const totalInvoicesCount = allInvoices.length;
 
     const unpaidInvoices = allInvoices.filter(
-      (i) => i.paymentStatus !== 'paid' && i.status !== 'paid'
+      (i) => i && i.paymentStatus !== 'paid' && i.status !== 'paid'
     );
-    const totalPayablesAmount = unpaidInvoices.reduce((sum, i) => sum + (i.amount || 0), 0);
+    const totalPayablesAmount = unpaidInvoices.reduce((sum, i) => sum + (Number(i.amount) || 0), 0);
 
     const overdueInvoices = allInvoices.filter(
-      (i) => i.status === 'overdue' || i.paymentStatus === 'overdue'
+      (i) => i && (i.status === 'overdue' || i.paymentStatus === 'overdue')
     );
-    const overdueTotalAmount = overdueInvoices.reduce((sum, i) => sum + (i.amount || 0), 0);
+    const overdueTotalAmount = overdueInvoices.reduce((sum, i) => sum + (Number(i.amount) || 0), 0);
 
     const attentionInvoices = allInvoices.filter(
       (i) =>
-        i.status === 'review' ||
-        i.status === 'critical' ||
-        i.status === 'hold' ||
-        i.status === 'on_hold'
+        i &&
+        (i.status === 'review' ||
+          i.status === 'critical' ||
+          i.status === 'hold' ||
+          i.status === 'on_hold')
     );
 
     const bankChangedInvoices = allInvoices.filter(
-      (i) => i.bankDetails?.isChangedFromPrevious
+      (i) => i && Boolean(i.bankDetails?.isChangedFromPrevious)
     );
 
     const poMismatchInvoices = allInvoices.filter(
       (i) =>
-        i.aiStatus === 'PO Mismatch' ||
-        i.status === 'critical' ||
-        (i.poNumber && i.status === 'review')
+        i &&
+        (i.aiStatus === 'PO Mismatch' ||
+          i.status === 'critical' ||
+          (i.poNumber && i.status === 'review'))
     );
 
     // Highest amount invoice
     let highestAmountInvoice: CopilotContextPayload['companyMetrics']['highestAmountInvoice'] = null;
     if (allInvoices.length > 0) {
-      const sortedByAmount = [...allInvoices].sort((a, b) => b.amount - a.amount);
+      const sortedByAmount = [...allInvoices].sort((a, b) => (Number(b.amount) || 0) - (Number(a.amount) || 0));
       const top = sortedByAmount[0];
-      highestAmountInvoice = {
-        invoiceNumber: top.invoiceNumber,
-        supplierName: top.supplierName,
-        amount: top.amount,
-        status: top.status,
-        id: top.id || top._id?.toString(),
-      };
+      if (top) {
+        highestAmountInvoice = {
+          invoiceNumber: top.invoiceNumber || 'N/A',
+          supplierName: top.supplierName || 'Supplier',
+          amount: Number(top.amount) || 0,
+          status: top.status || 'review',
+          id: top.id || top._id?.toString() || '',
+        };
+      }
     }
 
-    const allPOs = await PurchaseOrderModel.find({ companyId });
-    const openPOCount = allPOs.filter((po) => po.status === 'open').length;
+    const rawPOs = await PurchaseOrderModel.find({ companyId });
+    const allPOs = (rawPOs || []).filter(Boolean);
+    const openPOCount = allPOs.filter((po) => po && po.status === 'open').length;
 
     // 2. Question-Aware Specific Record Filtering
     let relevantInvoices: any[] = [];
@@ -123,14 +129,15 @@ class CopilotContextService {
     } else if (isBankSupplierQuery) {
       relevantInvoices = bankChangedInvoices.length > 0 ? bankChangedInvoices : allInvoices.slice(0, 5);
     } else if (isPayablesQuery) {
-      relevantInvoices = [...allInvoices].sort((a, b) => b.amount - a.amount).slice(0, 5);
+      relevantInvoices = [...allInvoices].sort((a, b) => (Number(b.amount) || 0) - (Number(a.amount) || 0)).slice(0, 5);
     } else {
       relevantInvoices = allInvoices.slice(0, 5);
     }
 
     // Exceptions filtering
     if (isPOQuery || isAttentionQuery || isOverdueQuery) {
-      relevantExceptions = await ExceptionModel.find({ companyId }).sort({ createdAt: -1 }).limit(10);
+      const rawEx = await ExceptionModel.find({ companyId }).sort({ createdAt: -1 }).limit(10);
+      relevantExceptions = (rawEx || []).filter(Boolean);
     }
 
     // Purchase Orders filtering
@@ -140,17 +147,20 @@ class CopilotContextService {
 
     // Suppliers filtering
     if (isBankSupplierQuery) {
-      relevantSuppliers = await SupplierModel.find({ companyId }).limit(10);
+      const rawSup = await SupplierModel.find({ companyId }).limit(10);
+      relevantSuppliers = (rawSup || []).filter(Boolean);
     }
 
     // Payments filtering
     if (isPayablesQuery || isOverdueQuery) {
-      relevantPayments = await PaymentModel.find({ companyId, status: { $ne: 'paid' } }).limit(10);
+      const rawPay = await PaymentModel.find({ companyId, status: { $ne: 'paid' } }).limit(10);
+      relevantPayments = (rawPay || []).filter(Boolean);
     }
 
     // Documents filtering
     if (isPOQuery || isAttentionQuery) {
-      relevantDocuments = await DocumentModel.find({ companyId }).sort({ createdAt: -1 }).limit(10);
+      const rawDocs = await DocumentModel.find({ companyId }).sort({ createdAt: -1 }).limit(10);
+      relevantDocuments = (rawDocs || []).filter(Boolean);
     }
 
     return {
@@ -167,58 +177,60 @@ class CopilotContextService {
       },
       querySpecificRecords: {
         relevantInvoices: relevantInvoices.map((inv) => ({
-          id: inv.id || inv._id?.toString(),
-          invoiceNumber: inv.invoiceNumber,
-          supplierName: inv.supplierName,
-          supplierGstin: inv.supplierGstin,
-          amount: inv.amount,
-          subtotal: inv.subtotal,
-          tax: inv.tax,
-          currency: inv.currency,
-          dueDate: inv.dueDate,
-          poNumber: inv.poNumber,
-          status: inv.status,
-          paymentStatus: inv.paymentStatus,
-          riskLevel: inv.riskLevel,
-          aiStatus: inv.aiStatus,
-          aiRecommendation: inv.aiRecommendation,
-          bankAccountChanged: Boolean(inv.bankDetails?.isChangedFromPrevious),
+          id: inv?.id || inv?._id?.toString() || '',
+          invoiceNumber: inv?.invoiceNumber || 'N/A',
+          supplierName: inv?.supplierName || 'Unknown Vendor',
+          supplierGstin: inv?.supplierGstin || null,
+          amount: Number(inv?.amount) || 0,
+          subtotal: Number(inv?.subtotal) || 0,
+          tax: Number(inv?.tax) || 0,
+          currency: inv?.currency || 'INR',
+          dueDate: inv?.dueDate || null,
+          poNumber: inv?.poNumber || null,
+          status: inv?.status || 'review',
+          paymentStatus: inv?.paymentStatus || 'pending',
+          riskLevel: inv?.riskLevel || 'low',
+          aiStatus: inv?.aiStatus || 'Needs Review',
+          aiRecommendation: inv?.aiRecommendation || '',
+          bankAccountChanged: Boolean(inv?.bankDetails?.isChangedFromPrevious),
         })),
         relevantPurchaseOrders: relevantPurchaseOrders.map((po) => ({
-          id: po.id || po._id?.toString(),
-          poNumber: po.poNumber,
-          supplierName: po.supplierName,
-          totalAmount: po.totalAmount,
-          status: po.status,
+          id: po?.id || po?._id?.toString() || '',
+          poNumber: po?.poNumber || 'N/A',
+          supplierName: po?.supplierName || 'Unknown Vendor',
+          totalAmount: Number(po?.totalAmount) || 0,
+          status: po?.status || 'open',
+          matchStatus: po?.matchStatus || 'open',
         })),
         relevantSuppliers: relevantSuppliers.map((sup) => ({
-          name: sup.name,
-          gstin: sup.gstin,
-          email: sup.email,
-          phone: sup.phone,
+          id: sup?.id || sup?._id?.toString() || '',
+          name: sup?.name || 'Unknown Vendor',
+          gstin: sup?.gstin || '',
+          email: sup?.email || '',
+          phone: sup?.phone || '',
         })),
         relevantExceptions: relevantExceptions.map((ex) => ({
-          id: ex.id,
-          invoiceNumber: ex.invoiceNumber,
-          supplierName: ex.supplierName,
-          title: ex.title,
-          severity: ex.severity,
-          aiRecommendation: ex.aiRecommendation,
+          id: ex?.id || ex?._id?.toString() || '',
+          invoiceNumber: ex?.invoiceNumber || 'N/A',
+          supplierName: ex?.supplierName || 'Unknown Vendor',
+          title: ex?.title || 'Exception',
+          severity: ex?.severity || 'review',
+          aiRecommendation: ex?.aiRecommendation || '',
         })),
         relevantPayments: relevantPayments.map((pm) => ({
-          id: pm.id,
-          invoiceNumber: pm.invoiceNumber,
-          supplierName: pm.supplierName,
-          amount: pm.amount,
-          dueDate: pm.dueDate,
-          status: pm.status,
+          id: pm?.id || pm?._id?.toString() || '',
+          invoiceNumber: pm?.invoiceNumber || 'N/A',
+          supplierName: pm?.supplierName || 'Unknown Vendor',
+          amount: Number(pm?.amount) || 0,
+          dueDate: pm?.dueDate || '',
+          status: pm?.status || 'pending',
         })),
         relevantDocuments: relevantDocuments.map((doc) => ({
-          id: doc.id,
-          originalFileName: doc.originalFileName,
-          documentType: doc.documentType,
-          processingStatus: doc.processingStatus,
-          matchStatus: doc.matchResult?.matchStatus,
+          id: doc?.id || doc?._id?.toString() || '',
+          originalFileName: doc?.originalFileName || '',
+          documentType: doc?.documentType || 'unknown',
+          processingStatus: doc?.processingStatus || 'uploaded',
+          matchStatus: doc?.matchResult?.matchStatus || 'no_match',
         })),
       },
     };

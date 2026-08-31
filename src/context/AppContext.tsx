@@ -46,6 +46,8 @@ interface AppContextType {
   deleteSupplier: (id: string) => Promise<void>;
   resolveException: (exceptionId: string, invoiceId?: string) => Promise<void>;
   updatePaymentStatus: (paymentId: string, status: string) => Promise<void>;
+  acceptPOVariance: (poNumberOrId: string, invoiceId?: string) => Promise<void>;
+  requestPOClarification: (poNumberOrId: string, invoiceId?: string, reason?: string) => Promise<void>;
   markNotificationRead: (id: string) => void;
   markAllNotificationsRead: () => void;
   refreshData: () => Promise<void>;
@@ -324,6 +326,63 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
+  const acceptPOVariance = async (poNumberOrId: string, invoiceId?: string): Promise<void> => {
+    // Optimistic UI state update
+    setPoData((prev) =>
+      prev.map((po) =>
+        po.id === poNumberOrId || po.poNumber.toLowerCase() === poNumberOrId.toLowerCase()
+          ? { ...po, matchStatus: 'matched', status: 'matched' }
+          : po
+      )
+    );
+    if (invoiceId) {
+      setInvoices((prev) =>
+        prev.map((inv) =>
+          inv.id === invoiceId || inv.invoiceNumber.toLowerCase() === invoiceId.toLowerCase()
+            ? { ...inv, status: 'ready', aiStatus: 'Variance Accepted', paymentStatus: 'scheduled', riskLevel: 'low' }
+            : inv
+        )
+      );
+    }
+
+    try {
+      await poService.acceptVariance(poNumberOrId, invoiceId);
+      showToast(`Variance accepted for PO ${poNumberOrId}!`, 'success');
+      await fetchAllBackendData();
+    } catch (err) {
+      console.error(`Failed to accept variance for PO ${poNumberOrId}:`, err);
+      showToast('Failed to persist variance acceptance to backend.', 'error');
+    }
+  };
+
+  const requestPOClarification = async (poNumberOrId: string, invoiceId?: string, reason?: string): Promise<void> => {
+    setPoData((prev) =>
+      prev.map((po) =>
+        po.id === poNumberOrId || po.poNumber.toLowerCase() === poNumberOrId.toLowerCase()
+          ? { ...po, matchStatus: 'mismatch', status: 'mismatch' }
+          : po
+      )
+    );
+    if (invoiceId) {
+      setInvoices((prev) =>
+        prev.map((inv) =>
+          inv.id === invoiceId || inv.invoiceNumber.toLowerCase() === invoiceId.toLowerCase()
+            ? { ...inv, status: 'hold', aiStatus: 'On Hold', paymentStatus: 'on_hold' }
+            : inv
+        )
+      );
+    }
+
+    try {
+      await poService.requestClarification(poNumberOrId, invoiceId, reason);
+      showToast(`Clarification requested for PO ${poNumberOrId}!`, 'warning');
+      await fetchAllBackendData();
+    } catch (err) {
+      console.error(`Failed to request clarification for PO ${poNumberOrId}:`, err);
+      showToast('Failed to persist clarification request to backend.', 'error');
+    }
+  };
+
   const addInvoice = async (invoiceData: Partial<Invoice>): Promise<Invoice> => {
     const newInvoice = await invoiceService.uploadInvoice(invoiceData);
     setInvoices((prev) => [newInvoice, ...prev]);
@@ -430,6 +489,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         deleteSupplier,
         resolveException,
         updatePaymentStatus,
+        acceptPOVariance,
+        requestPOClarification,
         markNotificationRead,
         markAllNotificationsRead,
         refreshData,

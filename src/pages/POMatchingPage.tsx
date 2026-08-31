@@ -4,12 +4,13 @@ import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { Badge } from '../components/ui/Badge';
 import { useApp } from '../context/AppContext';
-import { FileCheck2, AlertTriangle, ArrowRight } from 'lucide-react';
+import { FileCheck2, ArrowRight } from 'lucide-react';
 
 export const POMatchingPage: React.FC = () => {
   const navigate = useNavigate();
-  const { purchaseOrders, invoices, approveInvoice, holdInvoice, showToast } = useApp();
+  const { purchaseOrders, invoices, acceptPOVariance, requestPOClarification } = useApp();
   const [tab, setTab] = useState<'all' | 'mismatch' | 'matched'>('all');
+  const [actionLoading, setActionLoading] = useState<string | null>(null);
 
   const filteredPOs = purchaseOrders.filter((po) => {
     if (tab === 'mismatch') return po.matchStatus === 'mismatch';
@@ -17,15 +18,22 @@ export const POMatchingPage: React.FC = () => {
     return true;
   });
 
-  const handleAction = (poId: string, invoiceId: string | undefined, action: string) => {
-    if (invoiceId) {
-      if (action === 'Accept Variance') {
-        approveInvoice(invoiceId);
-      } else if (action === 'Request Clarification') {
-        holdInvoice(invoiceId);
-      }
+  const handleAcceptVariance = async (poNumber: string, invoiceId?: string) => {
+    try {
+      setActionLoading(`accept-${poNumber}`);
+      await acceptPOVariance(poNumber, invoiceId);
+    } finally {
+      setActionLoading(null);
     }
-    showToast(`Executed action "${action}" for PO ${poId}`, 'info');
+  };
+
+  const handleRequestClarification = async (poNumber: string, invoiceId?: string) => {
+    try {
+      setActionLoading(`clarify-${poNumber}`);
+      await requestPOClarification(poNumber, invoiceId);
+    } finally {
+      setActionLoading(null);
+    }
   };
 
   return (
@@ -88,12 +96,50 @@ export const POMatchingPage: React.FC = () => {
       ) : (
         <div className="space-y-4">
           {filteredPOs.map((po) => {
-            const linkedInvoice = invoices.find((i) => i.poNumber === po.poNumber || i.id === po.invoiceId);
-            const invAmount = linkedInvoice ? linkedInvoice.amount : 0;
-            const variance = linkedInvoice ? invAmount - po.totalAmount : 0;
-            const isAmountMatched = linkedInvoice ? Math.abs(variance) <= 2.0 : false;
-            const isMatched = po.matchStatus === 'matched' && isAmountMatched;
-            const isMismatch = po.matchStatus === 'mismatch' || (linkedInvoice && !isAmountMatched);
+            const linkedInvoice = invoices.find(
+              (i) => (i.poNumber && i.poNumber.trim().toLowerCase() === po.poNumber.trim().toLowerCase()) || i.id === po.invoiceId
+            );
+            const hasLinkedInvoice = Boolean(linkedInvoice);
+            const poAmount = typeof po.totalAmount === 'number' && !isNaN(po.totalAmount) ? po.totalAmount : 0;
+            const invAmount = hasLinkedInvoice && typeof linkedInvoice!.amount === 'number' && !isNaN(linkedInvoice!.amount)
+              ? linkedInvoice!.amount
+              : 0;
+
+            const variance = hasLinkedInvoice ? invAmount - poAmount : 0;
+            const isAmountReconciled = hasLinkedInvoice && Math.abs(variance) <= 2.0;
+
+            const isMatched = po.matchStatus === 'matched' || (hasLinkedInvoice && isAmountReconciled && po.matchStatus !== 'mismatch');
+            const isMismatch = po.matchStatus === 'mismatch' || (hasLinkedInvoice && !isAmountReconciled);
+
+            // Safe variance label calculation (Never produces NaN or Infinity)
+            let varianceLabel = 'No Linked Invoice';
+            let varianceClass = 'text-slate-500';
+            let cardBgClass = 'bg-slate-50 border-slate-200';
+
+            if (!hasLinkedInvoice) {
+              varianceLabel = 'Pending Invoice';
+              varianceClass = 'text-slate-500';
+              cardBgClass = 'bg-slate-50 border-slate-200';
+            } else if (isAmountReconciled) {
+              varianceLabel = '100% Match (0% Variance)';
+              varianceClass = 'text-emerald-600';
+              cardBgClass = 'bg-emerald-50/70 border-emerald-200';
+            } else if (poAmount > 0) {
+              const pct = ((Math.abs(variance) / poAmount) * 100).toFixed(1);
+              if (variance > 0) {
+                varianceLabel = `+${pct}% Overrun`;
+                varianceClass = 'text-rose-600';
+                cardBgClass = 'bg-rose-50/70 border-rose-200';
+              } else {
+                varianceLabel = `-${pct}% Underrun`;
+                varianceClass = 'text-amber-600';
+                cardBgClass = 'bg-amber-50/70 border-amber-200';
+              }
+            } else {
+              varianceLabel = variance > 0 ? `+₹${variance.toLocaleString('en-IN')}` : `₹0`;
+              varianceClass = 'text-rose-600';
+              cardBgClass = 'bg-rose-50/70 border-rose-200';
+            }
 
             return (
               <Card key={po.id || po.poNumber} className="p-6 border-slate-200/90 space-y-6 shadow-sm">
@@ -101,7 +147,7 @@ export const POMatchingPage: React.FC = () => {
                   <div>
                     <div className="flex items-center gap-2">
                       <h2 className="text-base font-bold text-slate-900">
-                        {po.supplierName} Reconciliation
+                        {po.supplierName || 'Vendor'} Reconciliation
                       </h2>
                       {isMatched ? (
                         <Badge variant="success" size="sm" dot>100% PO MATCHED</Badge>
@@ -115,8 +161,10 @@ export const POMatchingPage: React.FC = () => {
                     </div>
                     <p className="text-xs text-slate-500 mt-0.5">
                       Comparing Purchase Order <span className="font-mono font-semibold text-slate-700">{po.poNumber}</span>
-                      {linkedInvoice && (
+                      {linkedInvoice ? (
                         <> with Invoice <span className="font-mono font-semibold text-slate-700">{linkedInvoice.invoiceNumber}</span></>
+                      ) : (
+                        <span className="text-slate-400"> (No linked vendor invoice uploaded yet)</span>
                       )}
                     </p>
                   </div>
@@ -124,20 +172,22 @@ export const POMatchingPage: React.FC = () => {
                   {isMismatch && (
                     <div className="flex items-center gap-2">
                       <Button
-                        onClick={() => handleAction(po.poNumber, linkedInvoice?.id, 'Accept Variance')}
+                        onClick={() => handleAcceptVariance(po.poNumber, linkedInvoice?.id)}
+                        disabled={actionLoading === `accept-${po.poNumber}`}
                         variant="outline"
                         size="sm"
                         className="cursor-pointer"
                       >
-                        Accept Variance
+                        {actionLoading === `accept-${po.poNumber}` ? 'Accepting...' : 'Accept Variance'}
                       </Button>
                       <Button
-                        onClick={() => handleAction(po.poNumber, linkedInvoice?.id, 'Request Clarification')}
+                        onClick={() => handleRequestClarification(po.poNumber, linkedInvoice?.id)}
+                        disabled={actionLoading === `clarify-${po.poNumber}`}
                         variant="brand"
                         size="sm"
                         className="cursor-pointer"
                       >
-                        Request Clarification
+                        {actionLoading === `clarify-${po.poNumber}` ? 'Requesting...' : 'Request Clarification'}
                       </Button>
                     </div>
                   )}
@@ -151,7 +201,7 @@ export const POMatchingPage: React.FC = () => {
                     </span>
                     <div className="text-sm font-mono text-slate-600 font-semibold mb-1">{po.poNumber}</div>
                     <div className="text-2xl font-extrabold text-slate-900 tabular-nums">
-                      ₹{po.totalAmount.toLocaleString('en-IN')}
+                      ₹{poAmount.toLocaleString('en-IN')}
                     </div>
                   </div>
 
@@ -160,24 +210,26 @@ export const POMatchingPage: React.FC = () => {
                       Billed Vendor Invoice
                     </span>
                     <div className="text-sm font-mono text-purple-900 font-semibold mb-1">
-                      {linkedInvoice?.invoiceNumber || 'N/A'}
+                      {linkedInvoice?.invoiceNumber || 'No Linked Invoice'}
                     </div>
                     <div className="text-2xl font-extrabold text-purple-950 tabular-nums">
-                      ₹{invAmount.toLocaleString('en-IN')}
+                      {hasLinkedInvoice ? `₹${invAmount.toLocaleString('en-IN')}` : '—'}
                     </div>
                   </div>
 
-                  <div className={`p-4 rounded-xl border ${!isAmountMatched ? 'bg-rose-50/70 border-rose-200' : 'bg-emerald-50/70 border-emerald-200'}`}>
-                    <span className={`text-xs font-semibold uppercase tracking-wider block mb-1 ${!isAmountMatched ? 'text-rose-700' : 'text-emerald-700'}`}>
+                  <div className={`p-4 rounded-xl border ${cardBgClass}`}>
+                    <span className="text-xs font-semibold uppercase tracking-wider block mb-1 text-slate-700">
                       Variance / Discrepancy
                     </span>
-                    <div className={`text-sm font-semibold mb-1 ${!isAmountMatched ? 'text-rose-600' : 'text-emerald-600'}`}>
-                      {isAmountMatched
-                        ? '100% Match (0% Variance)'
-                        : (variance > 0 ? `+${((variance / po.totalAmount) * 100).toFixed(1)}% Overrun` : `-${((Math.abs(variance) / po.totalAmount) * 100).toFixed(1)}% Underrun`)}
+                    <div className={`text-sm font-semibold mb-1 ${varianceClass}`}>
+                      {varianceLabel}
                     </div>
-                    <div className={`text-2xl font-extrabold tabular-nums ${!isAmountMatched ? 'text-rose-700' : 'text-emerald-700'}`}>
-                      {isAmountMatched ? '₹0' : (variance >= 0 ? `+₹${variance.toLocaleString('en-IN')}` : `-₹${Math.abs(variance).toLocaleString('en-IN')}`)}
+                    <div className="text-2xl font-extrabold tabular-nums text-slate-900">
+                      {!hasLinkedInvoice
+                        ? '—'
+                        : isAmountReconciled
+                        ? '₹0'
+                        : (variance >= 0 ? `+₹${variance.toLocaleString('en-IN')}` : `-₹${Math.abs(variance).toLocaleString('en-IN')}`)}
                     </div>
                   </div>
                 </div>
@@ -199,12 +251,12 @@ export const POMatchingPage: React.FC = () => {
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100 text-slate-700">
-                          {po.items.map((item) => (
-                            <tr key={item.id}>
+                          {po.items.map((item, idx) => (
+                            <tr key={item.id || `po-item-${idx}`}>
                               <td className="py-3 px-3 font-medium text-slate-900">{item.description}</td>
                               <td className="py-3 px-3 text-center">{item.quantity}</td>
-                              <td className="py-3 px-3 text-right tabular-nums">₹{item.unitPrice.toLocaleString('en-IN')}</td>
-                              <td className="py-3 px-3 text-right tabular-nums font-semibold">₹{item.total.toLocaleString('en-IN')}</td>
+                              <td className="py-3 px-3 text-right tabular-nums">₹{(item.unitPrice || 0).toLocaleString('en-IN')}</td>
+                              <td className="py-3 px-3 text-right tabular-nums font-semibold">₹{(item.total || 0).toLocaleString('en-IN')}</td>
                             </tr>
                           ))}
                         </tbody>

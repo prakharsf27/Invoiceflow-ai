@@ -77,6 +77,18 @@ export const poService = {
       return null;
     }
   },
+  acceptVariance: async (id: string, invoiceId?: string): Promise<any> => {
+    return await fetchApi(`/purchase-orders/${id}/accept-variance`, {
+      method: 'PATCH',
+      body: JSON.stringify({ invoiceId }),
+    });
+  },
+  requestClarification: async (id: string, invoiceId?: string, reason?: string): Promise<any> => {
+    return await fetchApi(`/purchase-orders/${id}/request-clarification`, {
+      method: 'PATCH',
+      body: JSON.stringify({ invoiceId, reason }),
+    });
+  },
 };
 
 export const paymentService = {
