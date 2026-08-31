@@ -110,6 +110,26 @@ class DocumentStorageService {
       return false;
     }
   }
+
+  /**
+   * Delete all stored files for a company directory.
+   */
+  public async deleteCompanyFiles(companyId: string): Promise<void> {
+    try {
+      const companyDir = this.getCompanyDir(companyId);
+      if (fs.existsSync(companyDir)) {
+        const files = await fs.promises.readdir(companyDir);
+        for (const file of files) {
+          const filePath = path.resolve(companyDir, file);
+          if (filePath.startsWith(companyDir)) {
+            await fs.promises.unlink(filePath).catch(() => {});
+          }
+        }
+      }
+    } catch (e) {
+      console.warn(`[DocumentStorage] Could not clean up company folder:`, e);
+    }
+  }
 }
 
 export const documentStorageService = new DocumentStorageService();

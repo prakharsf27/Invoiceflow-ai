@@ -5,6 +5,13 @@ import jwt from 'jsonwebtoken';
 import { CompanyModel } from '../models/Company.js';
 import { UserModel, UserRole } from '../models/User.js';
 import { InvitationModel } from '../models/Invitation.js';
+import { InvoiceModel } from '../models/Invoice.js';
+import { PurchaseOrderModel } from '../models/PurchaseOrder.js';
+import { SupplierModel } from '../models/Supplier.js';
+import { PaymentModel } from '../models/Payment.js';
+import { ExceptionModel } from '../models/Exception.js';
+import { DocumentModel } from '../models/Document.js';
+import { documentStorageService } from '../services/storage/documentStorageService.js';
 import { isOwnerRole, getJwtSecret } from '../middleware/auth.js';
 
 /**
@@ -650,3 +657,77 @@ export const acceptInvitation = async (req: Request, res: Response): Promise<voi
     res.status(500).json({ success: false, error: error?.message || 'Failed to accept invitation.' });
   }
 };
+
+/**
+ * POST /api/company/reset-test-data
+ * Permanently removes all transactional/demo data for the authenticated company workspace.
+ * Deletes: invoices, purchase orders, suppliers, payments, exceptions, documents, and disk files.
+ * Preserves: user accounts, company profile, workspace settings, invitations.
+ */
+export const resetTestData = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const companyId = req.user?.companyId;
+    if (!companyId) {
+      res.status(401).json({ success: false, error: 'Authentication required' });
+      return;
+    }
+
+    console.log(`🧹 [ResetTestData] Initiating workspace test data wipe for companyId="${companyId}"...`);
+
+    // Perform atomic/parallel deletions across all transactional collections strictly scoped to companyId
+    const [
+      invoicesResult,
+      posResult,
+      suppliersResult,
+      paymentsResult,
+      exceptionsResult,
+      documentsResult,
+    ] = await Promise.all([
+      InvoiceModel.deleteMany({ companyId }),
+      PurchaseOrderModel.deleteMany({ companyId }),
+      SupplierModel.deleteMany({ companyId }),
+      PaymentModel.deleteMany({ companyId }),
+      ExceptionModel.deleteMany({ companyId }),
+      DocumentModel.deleteMany({ companyId }),
+    ]);
+
+    // Clean up physical uploaded files on disk for this company
+    try {
+      await documentStorageService.deleteCompanyFiles(companyId);
+    } catch (fsErr) {
+      console.warn(`[ResetTestData] Notice: Could not remove disk files for company "${companyId}":`, fsErr);
+    }
+
+    console.log(
+      `✅ [ResetTestData] Successfully wiped workspace test data for companyId="${companyId}":`,
+      {
+        invoicesDeleted: invoicesResult.deletedCount,
+        posDeleted: posResult.deletedCount,
+        suppliersDeleted: suppliersResult.deletedCount,
+        paymentsDeleted: paymentsResult.deletedCount,
+        exceptionsDeleted: exceptionsResult.deletedCount,
+        documentsDeleted: documentsResult.deletedCount,
+      }
+    );
+
+    res.json({
+      success: true,
+      message: 'Workspace test data successfully reset. All transactional records have been removed.',
+      deletedCounts: {
+        invoices: invoicesResult.deletedCount,
+        purchaseOrders: posResult.deletedCount,
+        suppliers: suppliersResult.deletedCount,
+        payments: paymentsResult.deletedCount,
+        exceptions: exceptionsResult.deletedCount,
+        documents: documentsResult.deletedCount,
+      },
+    });
+  } catch (error: any) {
+    console.error('❌ Error resetting workspace test data:', error);
+    res.status(500).json({
+      success: false,
+      error: error?.message || 'Failed to reset workspace test data.',
+    });
+  }
+};
+

@@ -7,6 +7,7 @@ import { useAuth } from '../context/AuthContext';
 import { companyService } from '../services/companyService';
 import { InviteMemberModal } from '../components/team/InviteMemberModal';
 import { RemoveMemberModal } from '../components/team/RemoveMemberModal';
+import { ResetTestDataModal } from '../components/settings/ResetTestDataModal';
 import type { CompanyProfile, TeamMember, TeamInvitation } from '../types';
 import {
   RefreshCw,
@@ -22,11 +23,19 @@ import {
   AlertCircle,
   Copy,
   Check,
+  RotateCcw,
+  Wrench,
 } from 'lucide-react';
 
 export const SettingsPage: React.FC = () => {
-  const { showToast, resetToDefault } = useApp();
+  const { showToast, refreshData } = useApp();
   const { user, isOwner, updateUserCompany } = useAuth();
+
+  const isDevMode =
+    import.meta.env.DEV ||
+    import.meta.env.MODE === 'development' ||
+    window.location.hostname === 'localhost' ||
+    window.location.hostname === '127.0.0.1';
 
   const [activeTab, setActiveTab] = useState<'profile' | 'team' | 'ai' | 'rules'>('profile');
 
@@ -53,6 +62,7 @@ export const SettingsPage: React.FC = () => {
   // Modals
   const [isInviteModalOpen, setIsInviteModalOpen] = useState(false);
   const [memberToRemove, setMemberToRemove] = useState<TeamMember | null>(null);
+  const [isResetModalOpen, setIsResetModalOpen] = useState(false);
 
   // Copied token feedback
   const [copiedToken, setCopiedToken] = useState<string | null>(null);
@@ -603,6 +613,59 @@ export const SettingsPage: React.FC = () => {
         </Card>
       )}
 
+      {/* DEVELOPMENT / TESTING TOOLS (Active only in development / local test environment) */}
+      {isDevMode && (
+        <Card className="p-6 border-dashed border-rose-300 bg-rose-50/20 space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="space-y-1">
+              <div className="flex items-center gap-2">
+                <div className="w-6 h-6 rounded-md bg-rose-600 text-white flex items-center justify-center font-bold text-xs shadow-xs">
+                  <Wrench className="w-3.5 h-3.5" />
+                </div>
+                <h3 className="text-sm font-bold text-slate-900">
+                  Developer &amp; Testing Controls
+                </h3>
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-rose-100 text-rose-800 uppercase tracking-wider">
+                  Dev Mode Active
+                </span>
+              </div>
+              <p className="text-xs text-slate-600">
+                Wipe all transactional invoices, purchase orders, suppliers, exceptions, and payments to re-test the workspace from a pristine zero state.
+              </p>
+            </div>
+
+            <Button
+              type="button"
+              variant="danger"
+              size="sm"
+              onClick={() => setIsResetModalOpen(true)}
+              className="cursor-pointer font-semibold gap-1.5 shrink-0 shadow-xs"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+              <span>Reset Test Data</span>
+            </Button>
+          </div>
+
+          <div className="p-3 bg-white rounded-lg border border-rose-200/80 text-[11px] text-slate-600 flex items-start gap-2">
+            <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+            <p>
+              Scoring, matching, and extraction pipelines can be validated repeatedly. Your user account, login credentials, and workspace configuration will stay authenticated.
+            </p>
+          </div>
+        </Card>
+      )}
+
+      {/* Reset Test Data Modal */}
+      <ResetTestDataModal
+        isOpen={isResetModalOpen}
+        onClose={() => setIsResetModalOpen(false)}
+        companyName={user?.companyName}
+        onSuccess={async () => {
+          await refreshData();
+          showToast('Workspace test data reset successfully. All transactional records have been wiped.', 'success');
+        }}
+      />
+
       {/* Invite Member Modal */}
       <InviteMemberModal
         isOpen={isInviteModalOpen}
@@ -626,3 +689,4 @@ export const SettingsPage: React.FC = () => {
     </div>
   );
 };
+
