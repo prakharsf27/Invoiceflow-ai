@@ -154,8 +154,8 @@ async function run00989TestSuite() {
   if (detRes.data.paymentTerms !== 'Net 30 Days') {
     throw new Error(`Assertion Failed: paymentTerms expected "Net 30 Days", got "${detRes.data.paymentTerms}"`);
   }
-  if (detRes.data.dueDate !== null) {
-    throw new Error(`Assertion Failed: dueDate must be null when absent, got "${detRes.data.dueDate}"`);
+  if (detRes.data.dueDate !== '2026-09-30') {
+    throw new Error(`Assertion Failed: dueDate must be derived from terms as "2026-09-30", got "${detRes.data.dueDate}"`);
   }
   if (detRes.data.subtotal !== 272000) {
     throw new Error(`Assertion Failed: subtotal expected 272000, got ${detRes.data.subtotal}`);
@@ -261,8 +261,8 @@ async function run00989TestSuite() {
   console.log('   Saved Invoice Bank Details:', savedInvoice?.bankDetails);
   console.log('   Saved Invoice Items count:', savedInvoice?.items?.length);
 
-  if (savedInvoice?.dueDate !== null && savedInvoice?.dueDate !== undefined) {
-    throw new Error(`Assertion Failed: Saved Invoice dueDate must be null/undefined when absent, got "${savedInvoice?.dueDate}"`);
+  if (savedInvoice?.dueDate !== '2026-09-30') {
+    throw new Error(`Assertion Failed: Saved Invoice dueDate expected "2026-09-30", got "${savedInvoice?.dueDate}"`);
   }
   if ((savedInvoice as any)?.calculatedDueDate !== '2026-09-30') {
     throw new Error(`Assertion Failed: calculatedDueDate expected "2026-09-30", got "${(savedInvoice as any)?.calculatedDueDate}"`);

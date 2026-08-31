@@ -2,6 +2,7 @@ import { DocumentType } from '../../models/Document.js';
 import { documentTextExtractionService } from '../documentTextExtractionService.js';
 import { ocrService } from './ocrService.js';
 import { deterministicParserService } from './deterministicParserService.js';
+import { NormalizationHelper } from './normalizationHelper.js';
 import {
   aiExtractionService,
   ExtractedInvoiceData,
@@ -193,6 +194,13 @@ class HybridExtractionService {
     det: ExtractedInvoiceData,
     ai: ExtractedInvoiceData
   ): ExtractedInvoiceData {
+    const invDate = det.invoiceDate || ai.invoiceDate;
+    const terms = det.paymentTerms || ai.paymentTerms;
+    let dueDate = det.dueDate || ai.dueDate;
+    if (!dueDate && invDate && terms) {
+      dueDate = NormalizationHelper.calculateDueDateFromTerms(invDate, terms);
+    }
+
     return {
       documentType: 'invoice',
       confidence: Math.max(det.confidence, ai.confidence),
@@ -201,15 +209,15 @@ class HybridExtractionService {
       supplierGstin: det.supplierGstin || ai.supplierGstin,
       supplierEmail: det.supplierEmail || ai.supplierEmail,
       supplierPhone: det.supplierPhone || ai.supplierPhone,
-      invoiceDate: det.invoiceDate || ai.invoiceDate,
-      dueDate: det.dueDate || ai.dueDate,
+      invoiceDate: invDate,
+      dueDate,
       poNumber: det.poNumber || ai.poNumber,
       currency: det.currency || ai.currency || 'INR',
       subtotal: (det.subtotal && det.subtotal > 0) ? det.subtotal : ai.subtotal,
       tax: (det.tax && det.tax > 0) ? det.tax : ai.tax,
       discount: det.discount || ai.discount || 0,
       amount: (det.amount && det.amount > 0) ? det.amount : ai.amount,
-      paymentTerms: det.paymentTerms || ai.paymentTerms,
+      paymentTerms: terms,
       bankDetails: {
         accountNumber: det.bankDetails?.accountNumber || ai.bankDetails?.accountNumber || null,
         ifsc: det.bankDetails?.ifsc || ai.bankDetails?.ifsc || null,

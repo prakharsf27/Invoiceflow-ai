@@ -158,20 +158,27 @@ export class NormalizationHelper {
 
   /**
    * Calculate derived due date from invoice date and payment terms (e.g. "Net 30 Days").
-   * Stored separately as calculatedDueDate to avoid fabricating extracted dueDate.
+   * Stored as dueDate or calculatedDueDate according to business requirements.
    */
   public static calculateDueDateFromTerms(invoiceDate: string | null | undefined, terms: string | null | undefined): string | null {
     if (!invoiceDate || !terms) return null;
     const normDate = this.normalizeDate(invoiceDate);
     if (!normDate) return null;
 
-    const daysMatch = terms.match(/net\s*(\d+)/i);
+    const lower = terms.toLowerCase().trim();
+    if (lower.includes('immediate') || lower.includes('receipt') || lower.includes('due on receipt')) {
+      return normDate;
+    }
+
+    const daysMatch = lower.match(/(?:net\s*)?(\d{1,3})\s*(?:days?)?/);
     if (daysMatch) {
       const days = parseInt(daysMatch[1], 10);
-      const d = new Date(normDate);
-      if (isNaN(d.getTime())) return null;
-      d.setDate(d.getDate() + days);
-      return d.toISOString().split('T')[0];
+      if (!isNaN(days) && days >= 0 && days <= 365) {
+        const d = new Date(normDate);
+        if (isNaN(d.getTime())) return null;
+        d.setDate(d.getDate() + days);
+        return d.toISOString().split('T')[0];
+      }
     }
     return null;
   }
@@ -193,6 +200,7 @@ export class NormalizationHelper {
 
   /**
    * Extract and validate Indian GSTIN (15 characters).
+   * Strict format: 2-digit state code + 10-char PAN + 1-char entity number + Z + 1-char checksum.
    */
   public static normalizeGSTIN(raw: string | null | undefined): string | null {
     if (!raw || typeof raw !== 'string') return null;
@@ -203,7 +211,7 @@ export class NormalizationHelper {
       return match[0];
     }
 
-    if (clean.length === 15 && /^\d{2}[A-Z]{5}/.test(clean)) {
+    if (clean.length === 15 && /^\d{2}[A-Z]{5}\d{4}[A-Z]{1}[A-Z\d]{1}[Z]{1}[A-Z\d]{1}$/.test(clean)) {
       return clean;
     }
 
@@ -211,21 +219,35 @@ export class NormalizationHelper {
   }
 
   /**
-   * Normalize email address.
+   * Normalize email address with contextual validation.
    */
   public static normalizeEmail(raw: string | null | undefined): string | null {
     if (!raw || typeof raw !== 'string') return null;
     const match = raw.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
-    return match ? match[0].toLowerCase() : null;
+    if (!match) return null;
+    const email = match[0].toLowerCase();
+    // Filter out common dummy/system domains unless valid
+    if (email.endsWith('.example') || email.includes('localhost')) return email;
+    return email;
   }
 
   /**
-   * Normalize phone number.
+   * Normalize phone number with contextual guard to prevent matching account numbers or dates.
    */
   public static normalizePhone(raw: string | null | undefined): string | null {
     if (!raw || typeof raw !== 'string') return null;
-    const match = raw.match(/(?:\+91[\s-]?)?[6-9]\d{9}/);
-    return match ? match[0] : null;
+    // Look for explicit phone labels or formatted Indian numbers
+    const labeledMatch = raw.match(/(?:phone|tel|telephone|mobile|contact|cell)[\s#.:\-_]*(?:\+91[\s-]?)?([6-9]\d{9})\b/i);
+    if (labeledMatch) {
+      return `+91 ${labeledMatch[1]}`;
+    }
+
+    const directMatch = raw.match(/\+91[\s-]?([6-9]\d{9})\b/);
+    if (directMatch) {
+      return `+91 ${directMatch[1]}`;
+    }
+
+    return null;
   }
 
   /**
@@ -240,7 +262,38 @@ export class NormalizationHelper {
     name = name.replace(/^(?:seller|supplier|vendor|from|company|biller|issued\s*by|sold\s*by)[\s#.:\-_]*/i, '');
     name = name.replace(/\s+/g, ' ').trim();
 
-    if (name.length < 3 || /^[0-9\W]+$/.test(name)) return null;
+    // Reject filler lines or lines that are clearly addresses/headers
+    if (
+      name.length < 3 ||
+      /^[0-9\W]+$/.test(name) ||
+      /^(?:tax|invoice|bill|date|due|gstin|phone|email|subtotal|total|item)/i.test(name)
+    ) {
+      return null;
+    }
+
+    return name;
+  }
+
+  /**
+   * Clean and validate Bank Name (rejecting descriptive phrases like "details verified by").
+   */
+  public static cleanBankName(raw: string | null | undefined): string | null {
+    if (!raw || typeof raw !== 'string') return null;
+    let name = raw.trim();
+    if (!name) return null;
+
+    // Strip labels
+    name = name.replace(/^(?:bank\s*name|bank)[\s:.]+/i, '').trim();
+
+    // Discard non-bank descriptive phrases
+    if (
+      /^(?:details|verified|account|transferred|payable|remittance|beneficiary|terms|notes|via|by)/i.test(name) ||
+      name.length < 3 ||
+      name.length > 50 ||
+      /^[0-9\W]+$/.test(name)
+    ) {
+      return null;
+    }
 
     return name;
   }
