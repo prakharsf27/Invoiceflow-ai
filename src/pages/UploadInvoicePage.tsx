@@ -196,7 +196,7 @@ export const UploadInvoicePage: React.FC = () => {
 
       if (uploadedDocs.length > 0) {
         showToast(
-          `Uploaded ${uploadedDocs.length} document(s). Processing AI extraction & 3-way PO matching in background!`,
+          `Uploaded ${uploadedDocs.length} document(s). Processing extraction & 3-way PO matching in background!`,
           'success'
         );
         setTimeout(() => {
@@ -220,7 +220,7 @@ export const UploadInvoicePage: React.FC = () => {
       const updated = await documentService.reprocessDocument(docId);
       if (updated) {
         setSelectedDoc(updated);
-        showToast('Document reprocessed with AI & PO matching updated!', 'success');
+        showToast('Document reprocessed & PO matching updated!', 'success');
         await loadCompanyDocuments(false);
       }
     } catch (err: any) {
@@ -272,7 +272,7 @@ export const UploadInvoicePage: React.FC = () => {
           Upload Center
         </h1>
         <p className="text-xs text-slate-500 mt-0.5">
-          Batch ingest invoices and purchase orders. Automated AI OCR extraction & 3-way PO matching.
+          Batch ingest invoices and purchase orders. Automated document intelligence & 3-way PO matching.
         </p>
       </div>
 
@@ -433,7 +433,7 @@ export const UploadInvoicePage: React.FC = () => {
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div>
             <h2 className="text-lg font-bold text-slate-900">Document Repository & Auto-Matching</h2>
-            <p className="text-xs text-slate-500">Uploaded documents, AI extractions, and 3-way PO match status</p>
+            <p className="text-xs text-slate-500">Uploaded documents, extracted data, and 3-way PO match status</p>
           </div>
 
           <div className="flex items-center gap-3">
@@ -582,7 +582,7 @@ export const UploadInvoicePage: React.FC = () => {
                           )}
                           {doc.processingStatus === 'processing' && (
                             <span className="text-[10px] font-semibold px-2 py-0.5 bg-amber-50 text-amber-700 rounded flex items-center gap-1">
-                              <Loader2 className="w-3 h-3 animate-spin" /> Processing AI...
+                              <Loader2 className="w-3 h-3 animate-spin" /> Processing...
                             </span>
                           )}
                           {doc.extractionStatus === 'extracted' && (
@@ -664,7 +664,7 @@ export const UploadInvoicePage: React.FC = () => {
               <div className="space-y-1 max-w-sm mx-auto">
                 <h3 className="text-sm font-bold text-slate-900">No documents uploaded yet</h3>
                 <p className="text-xs text-slate-500">
-                  Upload invoices and purchase orders together to run automatic AI extraction and 3-way PO matching.
+                  Upload invoices and purchase orders together to run automatic extraction and 3-way PO matching.
                 </p>
               </div>
               <Button
@@ -843,7 +843,7 @@ export const UploadInvoicePage: React.FC = () => {
                             <tbody className="divide-y divide-slate-100">
                               {selectedDoc.extractedData.lineItems.map((item: any, idx: number) => (
                                 <tr key={idx}>
-                                  <td className="py-2 px-3 font-medium text-slate-900">{item.description}</td>
+                                   <td className="py-2 px-3 font-medium text-slate-900">{item.description}</td>
                                   <td className="py-2 px-3">{item.quantity || 1}</td>
                                   <td className="py-2 px-3">₹{(item.unitPrice || 0).toLocaleString('en-IN')}</td>
                                   <td className="py-2 px-3">{item.taxRate || 18}%</td>
@@ -862,7 +862,7 @@ export const UploadInvoicePage: React.FC = () => {
                   <div className="p-6 text-center space-y-2 bg-slate-50 rounded-xl">
                     <Clock className="w-6 h-6 text-slate-400 mx-auto" />
                     <p className="font-semibold text-slate-700">Document not processed yet</p>
-                    <p className="text-slate-500">Click Reprocess with AI below to run AI OCR extraction.</p>
+                    <p className="text-slate-500">Click Reprocess below to extract document data.</p>
                   </div>
                 )}
               </div>
@@ -984,7 +984,7 @@ export const UploadInvoicePage: React.FC = () => {
                   className="cursor-pointer gap-1.5"
                 >
                   <Sparkles className={`w-3.5 h-3.5 text-brand-600 ${isReprocessing ? 'animate-spin' : ''}`} />
-                  <span>{isReprocessing ? 'Extracting with AI...' : 'Reprocess with AI'}</span>
+                  <span>{isReprocessing ? 'Processing document...' : 'Reprocess Document'}</span>
                 </Button>
                 <a
                   href={documentService.getDocumentFileUrl(selectedDoc.id)}
