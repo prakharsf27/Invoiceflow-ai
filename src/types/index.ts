@@ -1,5 +1,6 @@
 export type InvoiceStatus =
   | 'ready'
+  | 'approved'
   | 'review'
   | 'critical'
   | 'paid'

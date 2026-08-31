@@ -140,8 +140,8 @@ async function runInvoiceWorkflowPersistenceSuite() {
   console.log(`   Response success: ${data1?.success}, message: "${data1?.message}"`);
   console.log(`   Returned invoice status: ${data1?.data?.status}, paymentStatus: ${data1?.data?.paymentStatus}, aiStatus: ${data1?.data?.aiStatus}`);
 
-  if (code1 !== 200 || !data1?.success || data1?.data?.status !== 'ready' || data1?.data?.paymentStatus !== 'scheduled') {
-    throw new Error(`FAILED Test 1: Expected 200 with status="ready", received code=${code1}`);
+  if (code1 !== 200 || !data1?.success || data1?.data?.status !== 'approved' || data1?.data?.paymentStatus !== 'scheduled') {
+    throw new Error(`FAILED Test 1: Expected 200 with status="approved", received code=${code1}, status=${data1?.data?.status}`);
   }
 
   // Verify payment record was created / synchronized in MongoDB
@@ -161,7 +161,7 @@ async function runInvoiceWorkflowPersistenceSuite() {
   console.log(`   All AI Checks passed: ${freshInv?.aiChecks?.every((c) => c.passed)}`);
 
   if (
-    freshInv?.status !== 'ready' ||
+    freshInv?.status !== 'approved' ||
     freshInv?.paymentStatus !== 'scheduled' ||
     freshInv?.aiStatus !== 'Approved' ||
     !freshInv?.aiChecks?.every((c) => c.passed)

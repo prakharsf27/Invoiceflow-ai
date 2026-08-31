@@ -13,6 +13,8 @@ export const StatusBadge: React.FC<StatusBadgeProps> = ({ type, value }) => {
     switch (val) {
       case 'ready':
         return <Badge variant="success" dot>Ready</Badge>;
+      case 'approved':
+        return <Badge variant="success" dot>Approved</Badge>;
       case 'review':
         return <Badge variant="warning" dot>Needs Review</Badge>;
       case 'critical':
@@ -22,6 +24,7 @@ export const StatusBadge: React.FC<StatusBadgeProps> = ({ type, value }) => {
       case 'paid':
         return <Badge variant="success" dot>Paid</Badge>;
       case 'hold':
+      case 'on_hold':
         return <Badge variant="neutral" dot>On Hold</Badge>;
       case 'processing':
         return <Badge variant="purple" dot>Processing</Badge>;
@@ -32,6 +35,8 @@ export const StatusBadge: React.FC<StatusBadgeProps> = ({ type, value }) => {
 
   if (type === 'ai') {
     switch (value) {
+      case 'Approved':
+        return <Badge variant="success">✓ Approved</Badge>;
       case 'Ready':
         return <Badge variant="success">✓ Ready</Badge>;
       case 'PO Mismatch':

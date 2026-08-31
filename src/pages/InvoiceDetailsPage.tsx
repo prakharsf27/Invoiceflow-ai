@@ -42,11 +42,38 @@ export const InvoiceDetailsPage: React.FC = () => {
   } | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
+  const [actionLoading, setActionLoading] = useState<'approve' | 'hold' | null>(null);
 
   // Find invoice in central state
   const invoice = invoices.find(
     (i) => i.id === invoiceId || i.invoiceNumber.toLowerCase() === invoiceId?.toLowerCase()
   );
+
+  // Canonical state determinations
+  const isApproved = Boolean(invoice && (invoice.status === 'approved' || invoice.status === 'paid'));
+  const isOnHold = Boolean(invoice && (invoice.status === 'hold' || invoice.status === 'on_hold'));
+
+  const handleApprove = async () => {
+    if (!invoice || actionLoading !== null || isApproved) return;
+    const targetId = invoice.id || (invoice as any)._id || invoice.invoiceNumber;
+    setActionLoading('approve');
+    try {
+      await approveInvoice(targetId);
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleHold = async () => {
+    if (!invoice || actionLoading !== null || isApproved || isOnHold) return;
+    const targetId = invoice.id || (invoice as any)._id || invoice.invoiceNumber;
+    setActionLoading('hold');
+    try {
+      await holdInvoice(targetId);
+    } finally {
+      setActionLoading(null);
+    }
+  };
 
   // Load already-generated AI results from company records without making any network AI call on page mount
   useEffect(() => {
@@ -438,35 +465,66 @@ export const InvoiceDetailsPage: React.FC = () => {
       {/* Action CTA Bar */}
       <Card className="p-4 bg-white border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div className="text-xs text-slate-600">
-          Status: <span className="font-semibold text-slate-900 uppercase">{invoice.status}</span> • Payment:{' '}
+          Status:{' '}
+          <span className={`font-semibold uppercase ${isApproved ? 'text-emerald-700' : isOnHold ? 'text-amber-700' : 'text-slate-900'}`}>
+            {isApproved ? 'APPROVED' : isOnHold ? 'ON HOLD' : invoice.status.toUpperCase()}
+          </span>{' '}
+          • Payment:{' '}
           <span className="font-semibold text-slate-900 uppercase">{invoice.paymentStatus}</span>
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          <Button
-            onClick={async () => {
-              const targetId = invoice.id || (invoice as any)._id || invoice.invoiceNumber;
-              await approveInvoice(targetId);
-            }}
-            variant="primary"
-            size="sm"
-            className="cursor-pointer gap-1.5"
-          >
-            <Check className="w-3.5 h-3.5" />
-            <span>Approve Invoice</span>
-          </Button>
-          <Button
-            onClick={async () => {
-              const targetId = invoice.id || (invoice as any)._id || invoice.invoiceNumber;
-              await holdInvoice(targetId);
-            }}
-            variant="outline"
-            size="sm"
-            className="cursor-pointer gap-1.5"
-          >
-            <PauseCircle className="w-3.5 h-3.5 text-amber-600" />
-            <span>Place on Hold</span>
-          </Button>
+          {isApproved ? (
+            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+              <CheckCircle className="w-3.5 h-3.5 text-emerald-600" />
+              <span>Approved & Verified</span>
+            </div>
+          ) : (
+            <>
+              <Button
+                onClick={handleApprove}
+                disabled={actionLoading !== null}
+                variant="primary"
+                size="sm"
+                className="cursor-pointer gap-1.5"
+              >
+                {actionLoading === 'approve' ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    <span>Approving...</span>
+                  </>
+                ) : (
+                  <>
+                    <Check className="w-3.5 h-3.5" />
+                    <span>Approve Invoice</span>
+                  </>
+                )}
+              </Button>
+
+              {!isOnHold && (
+                <Button
+                  onClick={handleHold}
+                  disabled={actionLoading !== null}
+                  variant="outline"
+                  size="sm"
+                  className="cursor-pointer gap-1.5"
+                >
+                  {actionLoading === 'hold' ? (
+                    <>
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      <span>Putting on Hold...</span>
+                    </>
+                  ) : (
+                    <>
+                      <PauseCircle className="w-3.5 h-3.5 text-amber-600" />
+                      <span>Place on Hold</span>
+                    </>
+                  )}
+                </Button>
+              )}
+            </>
+          )}
+
           <Button
             onClick={() => navigate('/app/copilot')}
             variant="secondary"

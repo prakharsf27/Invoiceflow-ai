@@ -27,10 +27,10 @@ export const InvoicesPage: React.FC = () => {
 
       // Filter check
       if (filter === 'needs_review') {
-        return inv.status === 'review' || inv.status === 'critical' || inv.status === 'on_hold';
+        return inv.status === 'review' || inv.status === 'critical' || inv.status === 'hold' || inv.status === 'on_hold';
       }
       if (filter === 'ready') {
-        return inv.status === 'ready' || inv.status === 'paid';
+        return inv.status === 'ready' || inv.status === 'approved' || inv.status === 'paid';
       }
       if (filter === 'overdue') {
         return inv.status === 'overdue' || inv.paymentStatus === 'overdue';

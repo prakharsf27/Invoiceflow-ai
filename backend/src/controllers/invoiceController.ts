@@ -42,7 +42,7 @@ export const getInvoices = async (req: Request, res: Response): Promise<void> =>
       if (filter === 'needs_review') {
         query.status = { $in: ['review', 'critical', 'hold', 'on_hold'] };
       } else if (filter === 'ready') {
-        query.status = { $in: ['ready', 'paid'] };
+        query.status = { $in: ['ready', 'approved', 'paid'] };
       } else if (filter === 'overdue') {
         query.$or = [{ status: 'overdue' }, { paymentStatus: 'overdue' }];
       } else if (filter === 'critical') {
@@ -215,9 +215,9 @@ export const createInvoice = async (req: Request, res: Response): Promise<void> 
       poNumber: data.poNumber || null,
       paymentTerms: data.paymentTerms || 'Net 30 Days',
       status: autoStatus,
-      paymentStatus: autoStatus === 'ready' ? 'scheduled' : autoStatus === 'overdue' ? 'overdue' : 'pending',
+      paymentStatus: autoStatus === 'ready' || autoStatus === 'approved' ? 'scheduled' : autoStatus === 'overdue' ? 'overdue' : 'pending',
       riskLevel,
-      aiStatus: autoStatus === 'ready' ? 'Ready' : autoStatus === 'hold' ? 'On Hold' : 'Needs Review',
+      aiStatus: autoStatus === 'ready' ? 'Ready' : autoStatus === 'approved' ? 'Approved' : autoStatus === 'hold' ? 'On Hold' : 'Needs Review',
       bankDetails: {
         accountNumber: data.bankDetails?.accountNumber || null,
         ifsc: data.bankDetails?.ifsc || null,
@@ -345,7 +345,28 @@ export const approveInvoice = async (req: Request, res: Response): Promise<void>
       return;
     }
 
-    // Set approval status & update AI checks
+    // Idempotent duplicate check: If already approved or paid, return success without altering terminal state
+    if (invoice.status === 'approved') {
+      console.log(`[INVOICE-APPROVE] Invoice ${invoice.invoiceNumber} is already approved. Returning current record.`);
+      res.json({
+        success: true,
+        message: `Invoice ${invoice.invoiceNumber} is already approved.`,
+        data: invoice,
+      });
+      return;
+    }
+
+    if (invoice.status === 'paid') {
+      console.log(`[INVOICE-APPROVE] Invoice ${invoice.invoiceNumber} is already paid. Returning current record.`);
+      res.json({
+        success: true,
+        message: `Invoice ${invoice.invoiceNumber} is already paid.`,
+        data: invoice,
+      });
+      return;
+    }
+
+    // Set canonical approval status & update AI checks
     const rawChecks = Array.isArray(invoice.aiChecks) ? invoice.aiChecks : [];
     const updatedChecks = rawChecks.map((c: any) => ({
       id: c.id || `chk-${Date.now()}`,
@@ -355,7 +376,7 @@ export const approveInvoice = async (req: Request, res: Response): Promise<void>
       detail: c.detail || 'Verified and approved.',
     }));
 
-    invoice.status = 'ready';
+    invoice.status = 'approved';
     invoice.paymentStatus = 'scheduled';
     invoice.aiStatus = 'Approved';
     invoice.riskLevel = 'low';
@@ -394,7 +415,7 @@ export const approveInvoice = async (req: Request, res: Response): Promise<void>
       console.warn('Payment record sync warning:', payErr);
     }
 
-    console.log(`[INVOICE-APPROVE] ✅ Invoice ${invoice.invoiceNumber} approved & queued for payment in MongoDB.`);
+    console.log(`[INVOICE-APPROVE] ✅ Invoice ${invoice.invoiceNumber} approved (status='approved') in MongoDB.`);
 
     res.json({
       success: true,
@@ -423,6 +444,27 @@ export const holdInvoice = async (req: Request, res: Response): Promise<void> =>
       return;
     }
 
+    // Strict Terminal Guard: Approved invoices cannot be transitioned to Hold
+    if (invoice.status === 'approved' || invoice.status === 'paid') {
+      console.warn(`[INVOICE-HOLD] Attempted invalid transition: Cannot place approved/paid invoice ${invoice.invoiceNumber} on hold.`);
+      res.status(400).json({
+        success: false,
+        message: 'Invalid state transition: Cannot place an approved or paid invoice on hold.',
+      });
+      return;
+    }
+
+    // Idempotent duplicate check: If already on hold, return success without altering
+    if (invoice.status === 'hold' || invoice.status === 'on_hold') {
+      console.log(`[INVOICE-HOLD] Invoice ${invoice.invoiceNumber} is already on hold. Returning current record.`);
+      res.json({
+        success: true,
+        message: `Invoice ${invoice.invoiceNumber} is already on hold.`,
+        data: invoice,
+      });
+      return;
+    }
+
     invoice.status = 'hold';
     invoice.paymentStatus = 'on_hold';
     invoice.aiStatus = 'On Hold';
@@ -443,7 +485,7 @@ export const holdInvoice = async (req: Request, res: Response): Promise<void> =>
       console.warn('Payment hold sync warning:', payErr);
     }
 
-    console.log(`[INVOICE-HOLD] ✅ Invoice ${invoice.invoiceNumber} placed on hold in MongoDB.`);
+    console.log(`[INVOICE-HOLD] ✅ Invoice ${invoice.invoiceNumber} placed on hold (status='hold') in MongoDB.`);
 
     res.json({
       success: true,
@@ -469,13 +511,30 @@ export const updateInvoice = async (req: Request, res: Response): Promise<void> 
       return;
     }
 
-    // If status is being set to ready or paid, synchronize paymentStatus
-    if (updates.status === 'ready' || updates.status === 'paid') {
+    // Strict Terminal Guard: If already approved, reject reverting to hold, ready, review, or critical
+    if (
+      (invoice.status === 'approved' || invoice.status === 'paid') &&
+      updates.status &&
+      updates.status !== 'approved' &&
+      updates.status !== 'paid'
+    ) {
+      res.status(400).json({
+        success: false,
+        message: 'Invalid state transition: Approved invoices cannot be reverted to unapproved or held status.',
+      });
+      return;
+    }
+
+    // If status is being set to approved or paid, synchronize paymentStatus
+    if (updates.status === 'approved' || updates.status === 'paid') {
       if (!updates.paymentStatus) {
         updates.paymentStatus = updates.status === 'paid' ? 'paid' : 'scheduled';
       }
       if (!updates.aiStatus) {
         updates.aiStatus = 'Approved';
+      }
+      if (!updates.riskLevel) {
+        updates.riskLevel = 'low';
       }
     } else if (updates.status === 'hold' || updates.status === 'on_hold') {
       if (!updates.paymentStatus) {
