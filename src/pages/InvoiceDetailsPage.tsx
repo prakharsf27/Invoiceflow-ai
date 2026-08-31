@@ -23,6 +23,7 @@ import { Button } from '../components/ui/Button';
 import { Card } from '../components/ui/Card';
 import { Badge } from '../components/ui/Badge';
 import { StatusBadge } from '../components/common/StatusBadge';
+import { EvidenceModal } from '../components/common/EvidenceModal';
 import { useApp } from '../context/AppContext';
 import { formatFullINR } from '../lib/utils';
 import { aiService } from '../services/dataServices';
@@ -715,6 +716,16 @@ export const InvoiceDetailsPage: React.FC = () => {
           </Card>
         </div>
       </div>
+
+      {/* Flag Explanation / Evidence Modal */}
+      {invoice && (
+        <EvidenceModal
+          isOpen={showEvidenceModal}
+          onClose={() => setShowEvidenceModal(false)}
+          invoice={invoice}
+          riskAnalysis={riskAnalysis}
+        />
+      )}
     </div>
   );
 };
