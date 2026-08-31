@@ -107,9 +107,11 @@ export const POMatchingPage: React.FC = () => {
 
             const variance = hasLinkedInvoice ? invAmount - poAmount : 0;
             const isAmountReconciled = hasLinkedInvoice && Math.abs(variance) <= 2.0;
+            const isVarianceAccepted = Boolean((po as any).varianceAccepted || po.matchStatus === 'matched' || po.status === 'matched');
+            const isClarificationRequested = Boolean((po as any).clarificationRequested || po.matchStatus === 'mismatch' || po.status === 'mismatch');
 
-            const isMatched = po.matchStatus === 'matched' || (hasLinkedInvoice && isAmountReconciled && po.matchStatus !== 'mismatch');
-            const isMismatch = po.matchStatus === 'mismatch' || (hasLinkedInvoice && !isAmountReconciled);
+            const isMatched = isVarianceAccepted || (hasLinkedInvoice && isAmountReconciled && !isClarificationRequested);
+            const isMismatch = !isMatched && (isClarificationRequested || (hasLinkedInvoice && !isAmountReconciled));
 
             // Safe variance label calculation (Never produces NaN or Infinity)
             let varianceLabel = 'No Linked Invoice';
@@ -120,6 +122,10 @@ export const POMatchingPage: React.FC = () => {
               varianceLabel = 'Pending Invoice';
               varianceClass = 'text-slate-500';
               cardBgClass = 'bg-slate-50 border-slate-200';
+            } else if (isVarianceAccepted) {
+              varianceLabel = 'Variance Accepted (100% Reconciled)';
+              varianceClass = 'text-emerald-600';
+              cardBgClass = 'bg-emerald-50/70 border-emerald-200';
             } else if (isAmountReconciled) {
               varianceLabel = '100% Match (0% Variance)';
               varianceClass = 'text-emerald-600';

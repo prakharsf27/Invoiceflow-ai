@@ -190,17 +190,35 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const inv = invoices.find(
         (i) => (i.poNumber && i.poNumber.trim().toLowerCase() === po.poNumber.trim().toLowerCase()) || i.id === po.invoiceId
       );
+
+      if ((po as any).varianceAccepted || po.matchStatus === 'matched' || po.status === 'matched') {
+        return {
+          ...po,
+          matchStatus: 'matched',
+          status: 'matched',
+          invoiceId: inv?.id || po.invoiceId,
+        };
+      }
+
+      if ((po as any).clarificationRequested || po.matchStatus === 'mismatch' || po.status === 'mismatch') {
+        return {
+          ...po,
+          matchStatus: 'mismatch',
+          status: 'mismatch',
+          invoiceId: inv?.id || po.invoiceId,
+        };
+      }
+
       if (inv) {
         let matchStatus: PurchaseOrder['matchStatus'] = po.matchStatus || 'matched';
-        if (po.matchStatus === 'open' || !po.matchStatus) {
-          if (inv.status === 'ready' || inv.aiStatus === 'Ready') {
-            matchStatus = 'matched';
-          } else if (inv.aiStatus === 'PO Mismatch' || Math.abs(inv.amount - po.totalAmount) > 2.0) {
-            matchStatus = 'mismatch';
-          } else {
-            matchStatus = 'matched';
-          }
+        if (inv.status === 'ready' || inv.aiStatus === 'Ready' || inv.aiStatus === 'Variance Accepted' || inv.aiStatus === 'Approved') {
+          matchStatus = 'matched';
+        } else if (inv.aiStatus === 'PO Mismatch' || Math.abs(inv.amount - po.totalAmount) > 2.0) {
+          matchStatus = 'mismatch';
+        } else {
+          matchStatus = 'matched';
         }
+
         return {
           ...po,
           matchStatus,

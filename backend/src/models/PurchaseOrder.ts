@@ -19,6 +19,12 @@ export interface IPurchaseOrderDocument extends Document {
   status: string;
   invoiceId?: string;
   matchStatus?: string;
+  varianceAccepted?: boolean;
+  varianceAcceptedAt?: string;
+  varianceAcceptedBy?: string;
+  clarificationRequested?: boolean;
+  clarificationRequestedAt?: string;
+  clarificationReason?: string;
   items: IPOItem[];
   companyId: string;
 }
@@ -36,6 +42,12 @@ const PurchaseOrderSchema = new Schema<IPurchaseOrderDocument>(
     status: { type: String, required: true },
     invoiceId: { type: String },
     matchStatus: { type: String },
+    varianceAccepted: { type: Boolean, default: false },
+    varianceAcceptedAt: { type: String },
+    varianceAcceptedBy: { type: String },
+    clarificationRequested: { type: Boolean, default: false },
+    clarificationRequestedAt: { type: String },
+    clarificationReason: { type: String },
     items: [
       {
         id: { type: String, required: true },

@@ -1,7 +1,35 @@
 import { Request, Response } from 'express';
-import { InvoiceModel } from '../models/Invoice.js';
+import { InvoiceModel, IInvoiceDocument } from '../models/Invoice.js';
 import { PaymentModel } from '../models/Payment.js';
 import { invoiceExtractionService } from '../services/invoiceExtractionService.js';
+
+/**
+ * Explicit helper to find an Invoice by ID, Invoice Number, or MongoDB ObjectId.
+ */
+export const findInvoice = async (
+  companyId: string,
+  idOrInvoiceNumber: string
+): Promise<IInvoiceDocument | null> => {
+  if (!idOrInvoiceNumber || typeof idOrInvoiceNumber !== 'string') return null;
+
+  const cleanId = decodeURIComponent(idOrInvoiceNumber).trim();
+  const isValidObjectId = /^[0-9a-fA-F]{24}$/.test(cleanId);
+  const escaped = cleanId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+  const conditions: any[] = [
+    { id: cleanId },
+    { invoiceNumber: new RegExp(`^${escaped}$`, 'i') },
+  ];
+
+  if (isValidObjectId) {
+    conditions.push({ _id: cleanId });
+  }
+
+  return await InvoiceModel.findOne({
+    companyId,
+    $or: conditions,
+  } as any);
+};
 
 // GET /api/invoices
 export const getInvoices = async (req: Request, res: Response): Promise<void> => {
@@ -40,6 +68,7 @@ export const getInvoices = async (req: Request, res: Response): Promise<void> =>
     const invoices = await InvoiceModel.find(query as any).sort({ createdAt: -1 });
     res.json({ success: true, data: invoices });
   } catch (error) {
+    console.error('getInvoices error:', error);
     res.status(500).json({ success: false, message: (error as Error).message });
   }
 };
@@ -48,23 +77,8 @@ export const getInvoices = async (req: Request, res: Response): Promise<void> =>
 export const getInvoiceById = async (req: Request, res: Response): Promise<void> => {
   try {
     const companyId = req.user?.companyId || 'company-demo-01';
-    const id = decodeURIComponent(String(req.params.id)).trim();
-    const isValidObjectId = /^[0-9a-fA-F]{24}$/.test(id);
-    const escaped = id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-
-    const queryConditions: any[] = [
-      { id: id },
-      { invoiceNumber: new RegExp(`^${escaped}$`, 'i') },
-    ];
-
-    if (isValidObjectId) {
-      queryConditions.push({ _id: id });
-    }
-
-    const invoice = await InvoiceModel.findOne({
-      companyId,
-      $or: queryConditions,
-    } as any);
+    const id = String(req.params.id);
+    const invoice = await findInvoice(companyId, id);
 
     if (!invoice) {
       res.status(404).json({ success: false, message: `Invoice "${id}" not found.` });
@@ -73,6 +87,7 @@ export const getInvoiceById = async (req: Request, res: Response): Promise<void>
 
     res.json({ success: true, data: invoice });
   } catch (error) {
+    console.error('getInvoiceById error:', error);
     res.status(500).json({ success: false, message: (error as Error).message });
   }
 };
@@ -218,6 +233,7 @@ export const createInvoice = async (req: Request, res: Response): Promise<void> 
     await newInvoice.save();
     res.status(201).json({ success: true, data: newInvoice });
   } catch (error) {
+    console.error('createInvoice error:', error);
     res.status(500).json({ success: false, message: (error as Error).message });
   }
 };
@@ -314,39 +330,23 @@ export const uploadInvoice = async (req: Request, res: Response): Promise<void> 
   }
 };
 
-// Helper to build lookup query
-const buildInvoiceLookupQuery = (companyId: string, id: string) => {
-  const cleanId = decodeURIComponent(id).trim();
-  const isValidObjectId = /^[0-9a-fA-F]{24}$/.test(cleanId);
-  const escaped = cleanId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-
-  const conditions: any[] = [
-    { id: cleanId },
-    { invoiceNumber: new RegExp(`^${escaped}$`, 'i') },
-  ];
-
-  if (isValidObjectId) {
-    conditions.push({ _id: cleanId });
-  }
-
-  return { companyId, $or: conditions };
-};
-
 // PATCH /api/invoices/:id/approve
 export const approveInvoice = async (req: Request, res: Response): Promise<void> => {
   try {
     const companyId = req.user?.companyId || 'company-demo-01';
     const id = String(req.params.id);
-    const query = buildInvoiceLookupQuery(companyId, id);
 
-    const existing = await InvoiceModel.findOne(query as any);
-    if (!existing) {
+    console.log(`[INVOICE-APPROVE] approveInvoice called for Invoice ID/Number: "${id}", company: "${companyId}"`);
+
+    const invoice = await findInvoice(companyId, id);
+    if (!invoice) {
+      console.warn(`[INVOICE-APPROVE] Invoice "${id}" not found for company "${companyId}"`);
       res.status(404).json({ success: false, message: `Invoice "${id}" not found in company records.` });
       return;
     }
 
     // Set approval status & update AI checks
-    const rawChecks = Array.isArray(existing.aiChecks) ? existing.aiChecks : [];
+    const rawChecks = Array.isArray(invoice.aiChecks) ? invoice.aiChecks : [];
     const updatedChecks = rawChecks.map((c: any) => ({
       id: c.id || `chk-${Date.now()}`,
       title: c.title || 'Validation Check',
@@ -355,27 +355,16 @@ export const approveInvoice = async (req: Request, res: Response): Promise<void>
       detail: c.detail || 'Verified and approved.',
     }));
 
-    const invoice = await InvoiceModel.findOneAndUpdate(
-      query as any,
-      {
-        $set: {
-          status: 'ready',
-          paymentStatus: 'scheduled',
-          aiStatus: 'Approved',
-          riskLevel: 'low',
-          aiChecks: updatedChecks,
-          aiRecommendation: 'Invoice approved & verified for scheduled payment disbursement.',
-        },
-      },
-      { returnDocument: 'after' }
-    );
+    invoice.status = 'ready';
+    invoice.paymentStatus = 'scheduled';
+    invoice.aiStatus = 'Approved';
+    invoice.riskLevel = 'low';
+    invoice.aiChecks = updatedChecks as any;
+    invoice.aiRecommendation = 'Invoice approved & verified for scheduled payment disbursement.';
 
-    if (!invoice) {
-      res.status(404).json({ success: false, message: `Invoice "${id}" not found.` });
-      return;
-    }
+    await invoice.save();
 
-    // Synchronize / Upsert Payment record
+    // Synchronize / Upsert Payment record in MongoDB
     try {
       await PaymentModel.findOneAndUpdate(
         {
@@ -405,7 +394,7 @@ export const approveInvoice = async (req: Request, res: Response): Promise<void>
       console.warn('Payment record sync warning:', payErr);
     }
 
-    console.log(`[INVOICE-APPROVE] Invoice ${invoice.invoiceNumber} approved and queued for payment.`);
+    console.log(`[INVOICE-APPROVE] ✅ Invoice ${invoice.invoiceNumber} approved & queued for payment in MongoDB.`);
 
     res.json({
       success: true,
@@ -424,25 +413,22 @@ export const holdInvoice = async (req: Request, res: Response): Promise<void> =>
     const companyId = req.user?.companyId || 'company-demo-01';
     const id = String(req.params.id);
     const { note } = req.body;
-    const query = buildInvoiceLookupQuery(companyId, id);
 
-    const invoice = await InvoiceModel.findOneAndUpdate(
-      query as any,
-      {
-        $set: {
-          status: 'hold',
-          paymentStatus: 'on_hold',
-          aiStatus: 'On Hold',
-          aiRecommendation: note || 'Invoice placed on hold for discrepancy verification.',
-        },
-      },
-      { returnDocument: 'after' }
-    );
+    console.log(`[INVOICE-HOLD] holdInvoice called for Invoice ID/Number: "${id}", company: "${companyId}"`);
 
+    const invoice = await findInvoice(companyId, id);
     if (!invoice) {
-      res.status(404).json({ success: false, message: `Invoice "${id}" not found.` });
+      console.warn(`[INVOICE-HOLD] Invoice "${id}" not found for company "${companyId}"`);
+      res.status(404).json({ success: false, message: `Invoice "${id}" not found in company records.` });
       return;
     }
+
+    invoice.status = 'hold';
+    invoice.paymentStatus = 'on_hold';
+    invoice.aiStatus = 'On Hold';
+    invoice.aiRecommendation = note || 'Invoice placed on hold for discrepancy verification.';
+
+    await invoice.save();
 
     // Update corresponding payment status if exists
     try {
@@ -457,7 +443,7 @@ export const holdInvoice = async (req: Request, res: Response): Promise<void> =>
       console.warn('Payment hold sync warning:', payErr);
     }
 
-    console.log(`[INVOICE-HOLD] Invoice ${invoice.invoiceNumber} placed on hold.`);
+    console.log(`[INVOICE-HOLD] ✅ Invoice ${invoice.invoiceNumber} placed on hold in MongoDB.`);
 
     res.json({
       success: true,
@@ -476,7 +462,12 @@ export const updateInvoice = async (req: Request, res: Response): Promise<void> 
     const companyId = req.user?.companyId || 'company-demo-01';
     const id = String(req.params.id);
     const updates = req.body;
-    const query = buildInvoiceLookupQuery(companyId, id);
+
+    const invoice = await findInvoice(companyId, id);
+    if (!invoice) {
+      res.status(404).json({ success: false, message: `Invoice "${id}" not found in company records.` });
+      return;
+    }
 
     // If status is being set to ready or paid, synchronize paymentStatus
     if (updates.status === 'ready' || updates.status === 'paid') {
@@ -495,19 +486,12 @@ export const updateInvoice = async (req: Request, res: Response): Promise<void> 
       }
     }
 
-    const invoice = await InvoiceModel.findOneAndUpdate(
-      query as any,
-      { $set: updates },
-      { returnDocument: 'after' }
-    );
-
-    if (!invoice) {
-      res.status(404).json({ success: false, message: `Invoice "${id}" not found.` });
-      return;
-    }
+    Object.assign(invoice, updates);
+    await invoice.save();
 
     res.json({ success: true, data: invoice });
   } catch (error) {
+    console.error('updateInvoice error:', error);
     res.status(500).json({ success: false, message: (error as Error).message });
   }
 };
@@ -517,23 +501,24 @@ export const deleteInvoice = async (req: Request, res: Response): Promise<void> 
   try {
     const companyId = req.user?.companyId || 'company-demo-01';
     const id = String(req.params.id);
-    const query = buildInvoiceLookupQuery(companyId, id);
+    const invoice = await findInvoice(companyId, id);
 
-    const deleted = await InvoiceModel.findOneAndDelete(query as any);
-
-    if (!deleted) {
+    if (!invoice) {
       res.status(404).json({ success: false, message: `Invoice "${id}" not found.` });
       return;
     }
 
+    await InvoiceModel.deleteOne({ _id: invoice._id });
+
     // Also remove any related payment record
     await PaymentModel.deleteMany({
       companyId,
-      $or: [{ invoiceId: deleted.id }, { invoiceNumber: deleted.invoiceNumber }],
+      $or: [{ invoiceId: invoice.id }, { invoiceNumber: invoice.invoiceNumber }],
     } as any);
 
-    res.json({ success: true, message: `Invoice "${deleted.invoiceNumber}" deleted successfully.` });
+    res.json({ success: true, message: `Invoice "${invoice.invoiceNumber}" deleted successfully.` });
   } catch (error) {
+    console.error('deleteInvoice error:', error);
     res.status(500).json({ success: false, message: (error as Error).message });
   }
 };
