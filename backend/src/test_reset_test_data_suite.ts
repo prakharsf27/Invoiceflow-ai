@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import { connectDB } from './config/db.js';
 import { InvoiceModel } from './models/Invoice.js';
 import { PurchaseOrderModel } from './models/PurchaseOrder.js';
 import { SupplierModel } from './models/Supplier.js';
@@ -14,16 +15,7 @@ const runResetTestDataSuite = async () => {
   console.log('🧪 RUNNING RESET TEST DATA & WORKSPACE ISOLATION SUITE');
   console.log('================================================================\n');
 
-  const mongoUri = process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/invoiceflow';
-  try {
-    if (mongoose.connection.readyState === 0) {
-      await mongoose.connect(mongoUri);
-    }
-  } catch (err) {
-    const { MongoMemoryServer } = await import('mongodb-memory-server');
-    const mongod = await MongoMemoryServer.create();
-    await mongoose.connect(mongod.getUri());
-  }
+  await connectDB();
 
   const testCompanyA = `comp-reset-a-${Date.now()}`;
   const testCompanyB = `comp-reset-b-${Date.now()}`;
@@ -38,7 +30,7 @@ const runResetTestDataSuite = async () => {
 
   await UserModel.create({
     id: 'usr-owner-a',
-    email: 'owner-a@example.com',
+    email: `owner-a-${Date.now()}@example.com`,
     passwordHash: 'hashed_pw',
     name: 'Alice Owner',
     role: 'owner',
@@ -228,7 +220,7 @@ const runResetTestDataSuite = async () => {
   if (!preservedCompany || preservedCompany.name !== 'Test Org Alpha') {
     throw new Error('Company workspace record was accidentally modified or deleted.');
   }
-  if (!preservedUser || preservedUser.email !== 'owner-a@example.com') {
+  if (!preservedUser || !preservedUser.email.startsWith('owner-a-')) {
     throw new Error('User authentication record was accidentally modified or deleted.');
   }
   console.log(`   Preserved Company: ${preservedCompany.name} (id: ${preservedCompany.id})`);
@@ -248,10 +240,15 @@ const runResetTestDataSuite = async () => {
   console.log('🎉 ALL RESET TEST DATA SUITE TESTS PASSED PERFECTLY (5/5)!');
   console.log('================================================================\n');
 
-  await mongoose.disconnect();
+  // Clean up test companies
+  await CompanyModel.deleteMany({ id: { $in: [testCompanyA, testCompanyB] } });
+  await UserModel.deleteMany({ companyId: { $in: [testCompanyA, testCompanyB] } });
+  await InvoiceModel.deleteMany({ companyId: testCompanyB });
 };
 
-runResetTestDataSuite().catch((err) => {
-  console.error('❌ Test suite error:', err);
-  process.exit(1);
-});
+runResetTestDataSuite()
+  .then(() => process.exit(0))
+  .catch((err) => {
+    console.error('❌ Test suite error:', err);
+    process.exit(1);
+  });
