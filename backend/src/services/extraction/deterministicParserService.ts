@@ -89,6 +89,20 @@ export class DeterministicParserService {
       }
     }
 
+    // Multiline fallback: Label on line i, Value on line i+1
+    if (!invoiceNumber) {
+      for (let i = 0; i < lines.length - 1; i++) {
+        const l = lines[i];
+        if (/^(?:tax\s*)?invoice\s*(?:number|no\.?|#|id)$/i.test(l) || /^(?:inv|bill)\s*(?:number|no\.?|#)$/i.test(l)) {
+          const next = lines[i + 1];
+          if (/^[a-zA-Z0-9\-_/]{3,30}$/.test(next) && !/^(?:date|tax|bill|supplier|buyer)/i.test(next)) {
+            invoiceNumber = NormalizationHelper.normalizeInvoiceNumber(next);
+            if (invoiceNumber) break;
+          }
+        }
+      }
+    }
+
     // 2. Invoice Date Extraction
     let invoiceDate: string | null = null;
     const invDatePatterns = [
@@ -148,9 +162,26 @@ export class DeterministicParserService {
     let supplierName: string | null = null;
     let supplierGstin: string | null = null;
 
-    const sellerMatch = text.match(/\b(?:seller|supplier|vendor|from|billed\s*by)[\s:]*(?:[\r\n]+\s*)?([^\n\r]+)/i);
+    const sellerMatch = text.match(/\b(?:seller(?:\s*name)?|supplier(?:\s*name)?|vendor(?:\s*name)?|from|billed\s*by)[\s:]*(?:[\r\n]+\s*)?([^\n\r]+)/i);
     if (sellerMatch) {
       supplierName = NormalizationHelper.cleanCompanyName(sellerMatch[1]);
+    }
+
+    // Multiline fallback: "Supplier" on line i, "ABC Pvt Ltd" on line i+1
+    if (!supplierName) {
+      for (let i = 0; i < lines.length - 1; i++) {
+        const l = lines[i];
+        if (/^(?:seller(?:\s*name)?|supplier(?:\s*name)?|vendor(?:\s*name)?|billed\s*by)$/i.test(l)) {
+          const next = lines[i + 1];
+          if (!/^(?:tax|invoice|bill|date|number|gstin|buyer|seller|shipping|delivery|item|code)/i.test(next)) {
+            const cleaned = NormalizationHelper.cleanCompanyName(next);
+            if (cleaned && cleaned.length >= 3) {
+              supplierName = cleaned;
+              break;
+            }
+          }
+        }
+      }
     }
 
     // Check for explicit Seller GSTIN first
@@ -229,6 +260,24 @@ export class DeterministicParserService {
       || text.match(/(?:^|\n)\s*(?:invoice\s*)?total[\s:]*(?:[\r\n]+\s*)?[^\d\s]*([\d,]+(?:\.\d+)?)/i);
     if (totalMatch) {
       amount = NormalizationHelper.normalizeAmount(totalMatch[1]);
+    }
+
+    // Multiline fallback: "Total Amount" on line i, "₹1,25,000" on line i+1
+    if (!amount) {
+      for (let i = 0; i < lines.length - 1; i++) {
+        const l = lines[i];
+        if (/^(?:grand\s*total|invoice\s*total|total\s*amount|amount\s*due|net\s*payable|total)$/i.test(l)) {
+          const next = lines[i + 1];
+          const numMatch = next.match(/[\d,]+(?:\.\d+)?/);
+          if (numMatch) {
+            const parsedAmt = NormalizationHelper.normalizeAmount(numMatch[0]);
+            if (parsedAmt && parsedAmt > 0) {
+              amount = parsedAmt;
+              break;
+            }
+          }
+        }
+      }
     }
 
     const discountMatch = text.match(/(?:discount|less)[\s:]*(?:[\r\n]+\s*)?[^\d\s]*([\d,]+(?:\.\d+)?)/i);
@@ -328,6 +377,20 @@ export class DeterministicParserService {
       }
     }
 
+    // Multiline fallback: "PO Number" on line i, "PO-2026-00421" on line i+1
+    if (!poNumber) {
+      for (let i = 0; i < lines.length - 1; i++) {
+        const l = lines[i];
+        if (/^(?:purchase\s*order(?:\s*number|\s*no\.?|\s*#|\s*id)?|po\s*(?:number|no\.?|#|id)?)$/i.test(l)) {
+          const next = lines[i + 1];
+          if (/^[a-zA-Z0-9\-_/]{3,30}$/.test(next) && !/^(?:date|supplier|buyer|item)/i.test(next)) {
+            poNumber = NormalizationHelper.normalizePONumber(next);
+            if (poNumber) break;
+          }
+        }
+      }
+    }
+
     // 2. PO Date Extraction
     let poDate: string | null = null;
     const dateMatch = text.match(/\b(?:order|po|issued)?\s*date[\s:]*(?:[\r\n]+\s*)?([^\n\r,]+)/i);
@@ -346,9 +409,26 @@ export class DeterministicParserService {
       buyerName = NormalizationHelper.cleanCompanyName(buyerMatch[1]);
     }
 
-    const sellerMatch = text.match(/\b(?:supplier|vendor|seller|to)[\s:]*(?:[\r\n]+\s*)?([^\n\r]+)/i);
+    const sellerMatch = text.match(/\b(?:supplier(?:\s*name)?|vendor(?:\s*name)?|seller|to)[\s:]*(?:[\r\n]+\s*)?([^\n\r]+)/i);
     if (sellerMatch) {
       supplierName = NormalizationHelper.cleanCompanyName(sellerMatch[1]);
+    }
+
+    // Multiline fallback for supplier name
+    if (!supplierName) {
+      for (let i = 0; i < lines.length - 1; i++) {
+        const l = lines[i];
+        if (/^(?:supplier(?:\s*name)?|vendor(?:\s*name)?|seller)$/i.test(l)) {
+          const next = lines[i + 1];
+          if (!/^(?:date|buyer|gstin|item|delivery)/i.test(next)) {
+            const cleaned = NormalizationHelper.cleanCompanyName(next);
+            if (cleaned && cleaned.length >= 3) {
+              supplierName = cleaned;
+              break;
+            }
+          }
+        }
+      }
     }
 
     // Fallback: If no explicit supplier label, check headers
@@ -418,6 +498,24 @@ export class DeterministicParserService {
       || text.match(/(?:^|\n)\s*(?:po\s*|order\s*)?total[\s:]*(?:[\r\n]+\s*)?[^\d\s]*([\d,]+(?:\.\d+)?)/i);
     if (totalMatch) {
       total = NormalizationHelper.normalizeAmount(totalMatch[1]);
+    }
+
+    // Multiline fallback for total
+    if (!total) {
+      for (let i = 0; i < lines.length - 1; i++) {
+        const l = lines[i];
+        if (/^(?:grand\s*total|po\s*total|order\s*total|total\s*amount|total)$/i.test(l)) {
+          const next = lines[i + 1];
+          const numMatch = next.match(/[\d,]+(?:\.\d+)?/);
+          if (numMatch) {
+            const parsedTotal = NormalizationHelper.normalizeAmount(numMatch[0]);
+            if (parsedTotal && parsedTotal > 0) {
+              total = parsedTotal;
+              break;
+            }
+          }
+        }
+      }
     }
 
     if (subtotal && tax && !total) {

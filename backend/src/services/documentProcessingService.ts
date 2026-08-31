@@ -8,6 +8,7 @@ import { documentValidationService } from './documentValidationService.js';
 import { poMatchingService } from './poMatchingService.js';
 import { hybridExtractionService } from './extraction/hybridExtractionService.js';
 import { NormalizationHelper } from './extraction/normalizationHelper.js';
+import { ExtractionQualityEvaluator } from './extraction/extractionQualityEvaluator.js';
 
 const escapeRegExp = (str: string): string => {
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -30,56 +31,73 @@ class DocumentProcessingService {
     documentId: string,
     companyId: string,
     userId: string,
-    options?: { forceReprocess?: boolean }
+    optionsOrForce: { forceReprocess?: boolean } | boolean = false
   ): Promise<IDocumentEntity> {
-    const forceReprocess = Boolean(options?.forceReprocess);
+    const forceReprocess = typeof optionsOrForce === 'boolean'
+      ? optionsOrForce
+      : Boolean(optionsOrForce?.forceReprocess);
 
-    // 1. Fetch Document from DB scoped strictly to companyId
     const doc = await DocumentModel.findOne({ id: documentId, companyId });
     if (!doc) {
-      throw new Error(`Document with ID "${documentId}" not found or access denied.`);
+      throw new Error(`Document not found: ${documentId} for company ${companyId}`);
     }
 
-    // 2. Read file buffer
+    console.log(`[DocumentProcessingService] Processing ${documentId} (forceReprocess=${forceReprocess})`);
+
+    // 1. Retrieve file content
     const fileBuffer = await documentStorageService.getFileBuffer(companyId, doc.fileName);
+
+    // 2. Compute Content SHA-256 Hash
     const fileHash = this.calculateFileHash(fileBuffer);
 
-    // 3. Idempotency & Cache Check
-    if (!forceReprocess) {
-      if (doc.extractionStatus === 'extracted' && doc.extractedData) {
+    // 3. Content Hash Cache Check (Avoid redundant processing for identical files within company)
+    if (!forceReprocess && fileHash) {
+      // Idempotency: If THIS exact document record is already extracted and high quality, return it
+      if (doc.extractionStatus === 'extracted' && doc.extractedData && ExtractionQualityEvaluator.isReusableCachedExtraction(doc)) {
         console.log(`[DocumentProcessingService] Idempotency hit: Document ${documentId} already extracted.`);
         return doc;
       }
 
-      // Check if another document in company has identical fileHash and extractedData
-      const duplicateDoc = await DocumentModel.findOne({
+      // Check if another document in company has identical fileHash with valid high-quality extraction
+      const duplicateDocs = await DocumentModel.find({
         companyId,
         fileHash,
         extractionStatus: 'extracted',
         extractedData: { $exists: true },
-      });
+      }).sort({ createdAt: -1 }).limit(5);
 
-      if (duplicateDoc && duplicateDoc.extractedData) {
-        console.log(`[DocumentProcessingService] Content hash cache hit for ${documentId} (matches ${duplicateDoc.id}).`);
+      let validDuplicateDoc: IDocumentEntity | null = null;
+      for (const dup of duplicateDocs) {
+        if (ExtractionQualityEvaluator.isReusableCachedExtraction(dup)) {
+          validDuplicateDoc = dup;
+          break;
+        }
+      }
+
+      if (validDuplicateDoc) {
+        console.log(`[DOC] Valid content hash cache hit for ${documentId}; reusing high-quality extraction from ${validDuplicateDoc.id}.`);
         const updated = await DocumentModel.findOneAndUpdate(
           { id: documentId, companyId },
           {
             $set: {
               fileHash,
-              documentType: duplicateDoc.documentType,
-              extractedData: duplicateDoc.extractedData,
-              extractionMethod: duplicateDoc.extractionMethod || 'pdf_text',
-              aiAssisted: duplicateDoc.aiAssisted || false,
-              validationResults: duplicateDoc.validationResults,
-              matchResult: duplicateDoc.matchResult,
+              documentType: validDuplicateDoc.documentType,
+              extractedData: validDuplicateDoc.extractedData,
+              extractionMethod: validDuplicateDoc.extractionMethod || 'pdf_text',
+              extractionQuality: validDuplicateDoc.extractionQuality || 'high',
+              aiAssisted: validDuplicateDoc.aiAssisted || false,
+              validationResults: validDuplicateDoc.validationResults,
+              matchResult: validDuplicateDoc.matchResult,
               processingStatus: 'processed',
               extractionStatus: 'extracted',
-              extractedAt: duplicateDoc.extractedAt || new Date().toISOString(),
+              extractedAt: validDuplicateDoc.extractedAt || new Date().toISOString(),
             },
           },
           { returnDocument: 'after' }
         );
         return updated || doc;
+      } else if (duplicateDocs.length > 0) {
+        console.log(`[DOC] Content hash cache hit, but cached extraction is incomplete. Reprocessing current document.`);
       }
     }
 

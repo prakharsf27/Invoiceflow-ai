@@ -20,6 +20,90 @@ export interface ExtractionQualityResult {
 
 export class ExtractionQualityEvaluator {
   /**
+   * Validates whether a previously cached document extraction is demonstrably complete
+   * and high-quality. A cached result is REJECTED if any critical fields are missing,
+   * null, zero, placeholder values, or if the extraction was marked incomplete.
+   */
+  public static isReusableCachedExtraction(doc: any): boolean {
+    if (!doc || typeof doc !== 'object') return false;
+
+    // 1. Must be fully processed without errors
+    if (doc.extractionStatus !== 'extracted' || doc.processingStatus !== 'processed') {
+      return false;
+    }
+    if (doc.extractionError && String(doc.extractionError).trim().length > 0) {
+      return false;
+    }
+
+    const data = doc.extractedData;
+    if (!data || typeof data !== 'object') {
+      return false;
+    }
+
+    // 2. Reject explicit placeholder / garbage strings
+    const isInvalidString = (val: any, minLen = 2): boolean => {
+      if (!val || typeof val !== 'string') return true;
+      const clean = val.trim();
+      if (clean.length < minLen) return true;
+      const lower = clean.toLowerCase();
+      const placeholders = [
+        '—', '-', '–', 'null', 'undefined', 'n/a', 'none', 'unknown',
+        'supplier', 'supplier name', 'vendor', 'vendor name', 'seller',
+        'invoice', 'tax invoice', 'bill', 'purchase order', 'po',
+      ];
+      return placeholders.includes(lower);
+    };
+
+    const docType = doc.documentType || data.documentType || 'unknown';
+
+    // 3. Evaluate by Document Type
+    if (docType === 'invoice') {
+      const invNum = data.invoiceNumber;
+      const supplier = data.supplierName;
+      const amount = typeof data.amount === 'number'
+        ? data.amount
+        : (typeof data.total === 'number' ? data.total : null);
+
+      // Critical fields for invoice: invoiceNumber, supplierName, amount > 0
+      if (isInvalidString(invNum, 2)) return false;
+      if (isInvalidString(supplier, 3)) return false;
+      if (amount === null || isNaN(amount) || amount <= 0) return false;
+
+      // Check quality metadata if present
+      if (doc.extractionQuality === 'incomplete' || doc.extractionQuality === 'ambiguous') {
+        return false;
+      }
+      if (typeof doc.confidence === 'number' && doc.confidence < 0.80) {
+        return false;
+      }
+
+      return true;
+    } else if (docType === 'purchase_order') {
+      const poNum = data.poNumber;
+      const supplier = data.supplierName;
+      const total = typeof data.total === 'number'
+        ? data.total
+        : (typeof data.amount === 'number' ? data.amount : null);
+
+      // Critical fields for PO: poNumber, supplierName, total > 0
+      if (isInvalidString(poNum, 2)) return false;
+      if (isInvalidString(supplier, 3)) return false;
+      if (total === null || isNaN(total) || total <= 0) return false;
+
+      if (doc.extractionQuality === 'incomplete' || doc.extractionQuality === 'ambiguous') {
+        return false;
+      }
+      if (typeof doc.confidence === 'number' && doc.confidence < 0.80) {
+        return false;
+      }
+
+      return true;
+    }
+
+    return false;
+  }
+
+  /**
    * Detects whether the source document text contains visible evidence of an itemized table.
    * Looks for column headers, tabular structure markers, and repeating line patterns.
    */
