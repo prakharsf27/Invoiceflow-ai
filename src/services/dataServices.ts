@@ -153,12 +153,3 @@ export const copilotService = {
     }
   },
 };
-
-export const companyService = {
-  resetTestData: async (): Promise<{ success: boolean; message: string; deletedCounts?: any }> => {
-    return await fetchApi<{ success: boolean; message: string; deletedCounts?: any }>('/company/reset-test-data', {
-      method: 'POST',
-    });
-  },
-};
-
