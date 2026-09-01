@@ -2,6 +2,7 @@ import { PurchaseOrderModel } from '../models/PurchaseOrder.js';
 import { DocumentModel } from '../models/Document.js';
 import { InvoiceModel } from '../models/Invoice.js';
 import { IPOMatchResult } from '../models/Document.js';
+import { NormalizationHelper } from './extraction/normalizationHelper.js';
 
 export class POMatchingNormalizer {
   /**
@@ -97,6 +98,10 @@ class POMatchingService {
     const rawPoNumber = (extractedInvoice?.poNumber || '').trim();
     const rawSupplierGstin = (extractedInvoice?.supplierGstin || '').trim();
     const rawSupplierName = (extractedInvoice?.supplierName || '').trim();
+    const isPoValid = NormalizationHelper.isValidPONumber(rawPoNumber);
+    const isGstinValid = NormalizationHelper.isValidGSTIN(rawSupplierGstin);
+    const isSupplierValid = NormalizationHelper.isValidSupplierName(rawSupplierName);
+
     const invoiceTotal = POMatchingNormalizer.normalizeMoney(
       extractedInvoice?.amount ?? extractedInvoice?.total ?? 0
     );
@@ -104,7 +109,7 @@ class POMatchingService {
     let candidatePO: any = null;
 
     // 1. Priority 1: Exact / Alphanumeric PO Number Match in PurchaseOrders collection
-    if (rawPoNumber) {
+    if (rawPoNumber && isPoValid) {
       candidatePO = await PurchaseOrderModel.findOne({
         companyId,
         $or: [
@@ -124,7 +129,7 @@ class POMatchingService {
     }
 
     // 2. Priority 2: Look for extracted PO Documents in Document collection
-    if (!candidatePO && rawPoNumber) {
+    if (!candidatePO && rawPoNumber && isPoValid) {
       const poDoc: any = await DocumentModel.findOne({
         companyId,
         documentType: 'purchase_order',
@@ -147,29 +152,35 @@ class POMatchingService {
       }
     }
 
-    // 3. Priority 3: Match by Supplier GSTIN / Name if no direct PO number was referenced on invoice
-    if (!candidatePO && !rawPoNumber && (rawSupplierGstin || rawSupplierName)) {
+    // 3. Priority 3: Match by Supplier GSTIN / Name ONLY if valid and genuine supplier entity
+    if (!candidatePO && !rawPoNumber && (isGstinValid || isSupplierValid)) {
       const orConds: any[] = [];
-      if (rawSupplierGstin) orConds.push({ supplierGstin: new RegExp(`^${rawSupplierGstin}$`, 'i') });
-      if (rawSupplierName) orConds.push({ supplierName: new RegExp(rawSupplierName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i') });
+      if (isGstinValid) orConds.push({ supplierGstin: new RegExp(`^${rawSupplierGstin}$`, 'i') });
+      if (isSupplierValid) orConds.push({ supplierName: new RegExp(rawSupplierName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i') });
 
-      candidatePO = await PurchaseOrderModel.findOne({
-        companyId,
-        $or: orConds,
-      } as any);
+      if (orConds.length > 0) {
+        candidatePO = await PurchaseOrderModel.findOne({
+          companyId,
+          $or: orConds,
+        } as any);
+      }
     }
 
-    // Handle case where no candidate PO is found
+    // Handle case where no candidate PO is found or PO reference was invalid
     if (!candidatePO) {
       console.log(`[PO-MATCH DEBUG] No candidate PO found for company: ${companyId}, PO ref: "${rawPoNumber}"`);
+      const discrepancyMsg = rawPoNumber
+        ? (isPoValid
+            ? `Purchase Order ${rawPoNumber} referenced on invoice was not found in company procurement records.`
+            : `PO reference "${rawPoNumber}" is invalid or ambiguous and was not matched against procurement records.`)
+        : 'No purchase order reference or supplier PO found in company records.';
+
       return {
-        poNumber: rawPoNumber || undefined,
+        poNumber: isPoValid ? rawPoNumber : undefined,
         matchStatus: 'no_match',
         matchScore: 0,
         matchedFields: [],
-        discrepancies: rawPoNumber
-          ? [`Purchase Order ${rawPoNumber} referenced on invoice was not found in company procurement records.`]
-          : ['No purchase order reference or supplier PO found in company records.'],
+        discrepancies: [discrepancyMsg],
       };
     }
 

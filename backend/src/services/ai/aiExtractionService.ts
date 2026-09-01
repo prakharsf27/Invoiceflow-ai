@@ -317,6 +317,24 @@ class AIExtractionService {
       return { documentType: 'unknown', confidence: 0 };
     }
   }
+
+  public async extractInvoiceWithAI(
+    fileBuffer: Buffer,
+    mimeType: string,
+    extractedText?: string,
+    originalFileName?: string
+  ): Promise<{ data: ExtractedInvoiceData; rawJson: string; model: string }> {
+    return this.extractInvoiceDocument(fileBuffer, mimeType);
+  }
+
+  public async extractPurchaseOrderWithAI(
+    fileBuffer: Buffer,
+    mimeType: string,
+    extractedText?: string,
+    originalFileName?: string
+  ): Promise<{ data: ExtractedPOData; rawJson: string; model: string }> {
+    return this.extractPODocument(fileBuffer, mimeType);
+  }
 }
 
 export const aiExtractionService = new AIExtractionService();

@@ -49,6 +49,7 @@ export interface IDocumentEntity extends Document {
   extractionQuality?: 'high' | 'incomplete' | 'ambiguous';
   aiAssisted?: boolean;
   extractionError?: string;
+  extractedText?: string;
   extractedData?: any;
   validationResults?: IDocumentValidationCheck[];
   matchResult?: IPOMatchResult;
@@ -100,6 +101,7 @@ const DocumentSchema = new Schema<IDocumentEntity>(
     },
     aiAssisted: { type: Boolean, default: false },
     extractionError: { type: String },
+    extractedText: { type: String },
     extractedData: { type: Schema.Types.Mixed },
     validationResults: [{ type: Schema.Types.Mixed }],
     matchResult: { type: Schema.Types.Mixed },

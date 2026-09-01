@@ -60,6 +60,13 @@ export class DeterministicParserService {
     return 'unknown';
   }
 
+  public classifyDocumentType(text: string, filename?: string): DocumentType {
+    const type = this.detectDocumentTypeFromText(text);
+    if (type !== 'unknown') return type;
+    if (filename && /(?:purchase\s*order|\bpo[-_]?\b|order)/i.test(filename)) return 'purchase_order';
+    return 'invoice';
+  }
+
   /**
    * Deterministically parse text content into structured ExtractedInvoiceData.
    */
@@ -244,6 +251,19 @@ export class DeterministicParserService {
             }
           }
           if (supplierName) break;
+        }
+      }
+    }
+
+    // Score-based candidate fallback from top of document if label was not explicit
+    if (!supplierName) {
+      let bestScore = 15;
+      for (let i = 0; i < Math.min(8, lines.length); i++) {
+        const candidate = lines[i].trim();
+        const score = NormalizationHelper.scoreSupplierCandidate(candidate);
+        if (score > bestScore) {
+          bestScore = score;
+          supplierName = NormalizationHelper.cleanCompanyName(candidate);
         }
       }
     }
@@ -611,15 +631,14 @@ export class DeterministicParserService {
       }
     }
 
-    // Fallback: If no explicit supplier label, check headers
+    // Fallback: If no explicit supplier label, check headers with score-based candidate selection
     if (!supplierName) {
-      for (const line of lines.slice(0, 6)) {
-        if (!/(?:purchase|order|po|date|buyer|gstin)/i.test(line) && line.length >= 4 && line.length <= 60) {
-          const cleaned = NormalizationHelper.cleanCompanyName(line);
-          if (cleaned) {
-            supplierName = cleaned;
-            break;
-          }
+      let bestScore = 15;
+      for (const line of lines.slice(0, 8)) {
+        const score = NormalizationHelper.scoreSupplierCandidate(line);
+        if (score > bestScore) {
+          bestScore = score;
+          supplierName = NormalizationHelper.cleanCompanyName(line);
         }
       }
     }

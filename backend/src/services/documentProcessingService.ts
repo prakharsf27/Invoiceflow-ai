@@ -174,26 +174,48 @@ class DocumentProcessingService {
         const valRes = documentValidationService.validateFinancialMath(extractedPayload);
         validationResults = valRes.validationChecks;
 
+        // Convert any failedFields into structured validationResults checks
+        if (extractionResult.failedFields && extractionResult.failedFields.length > 0) {
+          for (const failedField of extractionResult.failedFields) {
+            const isCrit = extractionResult.missingCriticalFields?.includes(failedField);
+            const detail = extractionResult.fieldValidationStatus?.[failedField]?.detail
+              || `Field "${failedField}" failed validation check.`;
+            if (!validationResults.some((c: any) => c.id === `check-${failedField.toLowerCase()}`)) {
+              validationResults.push({
+                id: `check-${failedField.toLowerCase()}`,
+                title: `Field Validation: ${failedField}`,
+                passed: false,
+                type: isCrit ? 'critical' : 'warning',
+                detail,
+              });
+            }
+          }
+        }
+
         // Optional supplier association for PO
         let poSupplierObj: any = null;
         try {
           const poSupName = (extractedPayload.supplierName || '').trim();
           const poSupGstin = (extractedPayload.supplierGstin || '').trim();
-          if (poSupName) {
+          const isPoSupNameAuthentic = NormalizationHelper.isValidSupplierName(poSupName);
+          const isPoGstinAuthentic = NormalizationHelper.isValidGSTIN(poSupGstin);
+          const isPoExtractionComplete = extractionResult.quality === 'high';
+
+          if (poSupName && isPoSupNameAuthentic) {
             poSupplierObj = await SupplierModel.findOne({
               companyId,
               $or: [
                 { name: new RegExp(`^${escapeRegExp(poSupName)}$`, 'i') },
-                ...(poSupGstin ? [{ gstin: new RegExp(`^${escapeRegExp(poSupGstin)}$`, 'i') }] : []),
+                ...(isPoGstinAuthentic ? [{ gstin: new RegExp(`^${escapeRegExp(poSupGstin)}$`, 'i') }] : []),
               ],
             });
 
-            if (!poSupplierObj) {
+            if (!poSupplierObj && isPoExtractionComplete) {
               poSupplierObj = await SupplierModel.create({
                 id: `sup-${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 7)}`,
                 companyId,
                 name: poSupName,
-                gstin: poSupGstin,
+                gstin: isPoGstinAuthentic ? poSupGstin : '',
                 email: extractedPayload.supplierEmail || '',
                 phone: '',
                 totalSpend: 0,
@@ -263,6 +285,24 @@ class DocumentProcessingService {
         const valRes = documentValidationService.validateFinancialMath(extractedPayload);
         validationResults = valRes.validationChecks;
 
+        // Convert any failedFields into structured validationResults checks
+        if (extractionResult.failedFields && extractionResult.failedFields.length > 0) {
+          for (const failedField of extractionResult.failedFields) {
+            const isCrit = extractionResult.missingCriticalFields?.includes(failedField);
+            const detail = extractionResult.fieldValidationStatus?.[failedField]?.detail
+              || `Field "${failedField}" failed validation check.`;
+            if (!validationResults.some((c: any) => c.id === `check-${failedField.toLowerCase()}`)) {
+              validationResults.push({
+                id: `check-${failedField.toLowerCase()}`,
+                title: `Field Validation: ${failedField}`,
+                passed: false,
+                type: isCrit ? 'critical' : 'warning',
+                detail,
+              });
+            }
+          }
+        }
+
         // Automatic PO Matching in TypeScript (0 AI calls)
         console.log(`[DOC] PO matching started for ${documentId}`);
         matchResult = await poMatchingService.matchInvoiceToPO(companyId, extractedPayload);
@@ -275,24 +315,31 @@ class DocumentProcessingService {
 
         const isMathValid = valRes.isMathValid;
         const isPOMatched = matchResult.matchStatus === 'matched';
+        const isExtractionComplete = extractionResult.quality === 'high' && (!extractionResult.missingCriticalFields || extractionResult.missingCriticalFields.length === 0);
 
-        let status = isPOMatched && isMathValid ? 'ready' : (matchResult.matchStatus === 'mismatch' ? 'critical' : 'review');
-        let aiStatus = isPOMatched && isMathValid ? 'Ready' : (matchResult.matchStatus === 'mismatch' ? 'PO Mismatch' : (!isMathValid ? 'Math Discrepancy' : 'Needs Review'));
+        let status = (isPOMatched && isMathValid && isExtractionComplete)
+          ? 'ready'
+          : (matchResult.matchStatus === 'mismatch' ? 'critical' : 'review');
+        let aiStatus = (isPOMatched && isMathValid && isExtractionComplete)
+          ? 'Ready'
+          : (matchResult.matchStatus === 'mismatch' ? 'PO Mismatch' : (!isMathValid ? 'Math Discrepancy' : (!isExtractionComplete ? 'Extraction Review' : 'Needs Review')));
 
         // Supplier Automation: Associate with existing supplier or auto-create within tenant
-        let supplierId = `sup-${(extractedPayload.supplierName || 'custom').toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 10)}`;
-        let finalSupplierName = extractedPayload.supplierName || 'Supplier Pvt Ltd';
+        const rawSupplierName = (extractedPayload.supplierName || '').trim();
+        const supplierGstin = (extractedPayload.supplierGstin || '').trim();
+        const isSupplierNameAuthentic = NormalizationHelper.isValidSupplierName(rawSupplierName);
+        const isGstinAuthentic = NormalizationHelper.isValidGSTIN(supplierGstin);
+
+        let supplierId = `sup-${(isSupplierNameAuthentic ? rawSupplierName : 'unverified').toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 10)}`;
+        let finalSupplierName = isSupplierNameAuthentic ? rawSupplierName : 'Unverified Supplier';
         let isBankChanged = false;
 
         try {
-          const supplierGstin = (extractedPayload.supplierGstin || '').trim();
-          const rawSupplierName = (extractedPayload.supplierName || '').trim();
-
           const searchConds: any[] = [];
-          if (supplierGstin) {
+          if (isGstinAuthentic) {
             searchConds.push({ gstin: new RegExp(`^${escapeRegExp(supplierGstin)}$`, 'i') });
           }
-          if (rawSupplierName) {
+          if (isSupplierNameAuthentic) {
             searchConds.push({ name: new RegExp(`^${escapeRegExp(rawSupplierName)}$`, 'i') });
           }
 
@@ -308,7 +355,7 @@ class DocumentProcessingService {
           if (matchedSupplier) {
             supplierId = matchedSupplier.id;
             finalSupplierName = matchedSupplier.name;
-            const matchedByField = supplierGstin && matchedSupplier.gstin?.toLowerCase() === supplierGstin.toLowerCase() ? 'gstin' : 'name';
+            const matchedByField = isGstinAuthentic && matchedSupplier.gstin?.toLowerCase() === supplierGstin.toLowerCase() ? 'gstin' : 'name';
 
             // Detect if invoice bank account changed compared to existing trusted supplier record
             if (extractedPayload.bankDetails?.accountNumber && matchedSupplier.bankAccounts?.[0]?.accountNumber) {
@@ -319,8 +366,8 @@ class DocumentProcessingService {
               }
             }
 
-            // Update supplier aggregated stats safely only if it's a new invoice
-            if (!existingInvoice) {
+            // Update supplier aggregated stats safely ONLY if it's a new invoice AND extraction is complete and valid
+            if (!existingInvoice && isExtractionComplete && isMathValid) {
               await SupplierModel.updateOne(
                 { id: matchedSupplier.id, companyId },
                 {
@@ -341,8 +388,8 @@ class DocumentProcessingService {
               matchedBy: matchedByField,
               message: `Existing supplier matched: ${matchedSupplier.name}. Invoice associated with existing supplier.`,
             };
-          } else if (rawSupplierName) {
-            // Auto-create new Supplier record from extracted invoice info
+          } else if (rawSupplierName && isSupplierNameAuthentic && isExtractionComplete) {
+            // Auto-create new Supplier record from extracted invoice info ONLY if name is authentic and extraction is complete
             const generatedSupId = `sup-${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 7)}`;
             const newBankAccounts = extractedPayload.bankDetails?.accountNumber
               ? [
@@ -360,7 +407,7 @@ class DocumentProcessingService {
               id: generatedSupId,
               companyId,
               name: rawSupplierName,
-              gstin: supplierGstin,
+              gstin: isGstinAuthentic ? supplierGstin : '',
               email: extractedPayload.supplierEmail || '',
               phone: extractedPayload.supplierPhone || '',
               totalSpend: invTotal || 0,
@@ -375,6 +422,7 @@ class DocumentProcessingService {
               riskStatus: 'low',
             });
             supplierId = createdSup.id;
+            finalSupplierName = createdSup.name;
             console.log(`[DocumentProcessingService] Auto-registered new supplier "${rawSupplierName}" (${supplierId}) for company ${companyId}`);
 
             supplierResult = {
@@ -383,6 +431,16 @@ class DocumentProcessingService {
               isNewSupplier: true,
               matchedBy: 'auto_created',
               message: `New supplier detected: ${createdSup.name}. Supplier information was extracted from the invoice and added to your supplier database.`,
+            };
+          } else {
+            supplierResult = {
+              supplierId: '',
+              supplierName: isSupplierNameAuthentic ? rawSupplierName : 'Unverified Supplier',
+              isNewSupplier: false,
+              matchedBy: 'name',
+              message: isSupplierNameAuthentic
+                ? 'Supplier creation deferred: extraction requires review before registering supplier.'
+                : 'Supplier creation blocked: extracted candidate is an address fragment, filename, or unverified label.',
             };
           }
         } catch (supErr) {
@@ -409,7 +467,7 @@ class DocumentProcessingService {
               createdBy: userId,
               supplierId,
               supplierName: finalSupplierName,
-              supplierGstin: extractedPayload.supplierGstin || null,
+              supplierGstin: isGstinAuthentic ? supplierGstin : null,
               supplierEmail: extractedPayload.supplierEmail || null,
               supplierPhone: extractedPayload.supplierPhone || null,
               amount: invTotal,
@@ -448,11 +506,14 @@ class DocumentProcessingService {
                 poItemMatched: true,
               })),
               aiChecks: validationResults,
+              validationResults,
               aiRecommendation: isBankChanged
                 ? 'CRITICAL ALERT: Bank account details differ from verified supplier record. Verify bank mandate before disbursement.'
-                : (isPOMatched && isMathValid
+                : (isPOMatched && isMathValid && isExtractionComplete
                   ? 'Document extracted and 100% matched with PO. Safe for autonomous approval.'
-                  : 'Inspect validation checks and PO variances prior to disbursement.'),
+                  : (!isExtractionComplete
+                    ? `Extraction review required: ${extractionResult.validationErrors?.join('; ') || 'Critical document fields failed validation'}.`
+                    : 'Inspect validation checks and PO variances prior to disbursement.')),
             },
           },
           { upsert: true, returnDocument: 'after' }
@@ -480,8 +541,8 @@ class DocumentProcessingService {
 
       // Evaluate whether critical fields are present (missing PO/Inv number alone does not cause total failure)
       const isCriticalMissing = (docType === 'purchase_order')
-        ? (!extractedPayload.total || extractedPayload.total <= 0 || !extractedPayload.supplierName)
-        : (!extractedPayload.amount || extractedPayload.amount <= 0 || !extractedPayload.supplierName);
+        ? (!extractedPayload.total || extractedPayload.total <= 0 || !extractedPayload.supplierName || !NormalizationHelper.isValidSupplierName(extractedPayload.supplierName))
+        : (!extractedPayload.amount || extractedPayload.amount <= 0 || !extractedPayload.supplierName || !NormalizationHelper.isValidSupplierName(extractedPayload.supplierName));
 
       const isFailedExtraction = extractionResult.quality === 'incomplete' && isCriticalMissing;
 
@@ -492,6 +553,7 @@ class DocumentProcessingService {
           $set: {
             documentType: docType,
             extractedData: extractedPayload,
+            extractedText: extractionResult.extractedText || undefined,
             extractionMethod: extractionResult.extractionMethod,
             extractionQuality: extractionResult.quality || 'high',
             aiAssisted: extractionResult.aiAssisted,
@@ -501,7 +563,7 @@ class DocumentProcessingService {
             linkedRecordId,
             processingStatus: isFailedExtraction ? 'failed' : 'processed',
             extractionStatus: isFailedExtraction ? 'failed' : 'extracted',
-            extractionError: isFailedExtraction ? 'Critical fields missing from document extraction.' : null,
+            extractionError: isFailedExtraction ? 'Critical fields missing or invalid from document extraction.' : null,
             extractedAt: new Date().toISOString(),
           },
         },

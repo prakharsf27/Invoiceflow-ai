@@ -227,30 +227,189 @@ export class NormalizationHelper {
   }
 
   /**
-   * Extract and validate Indian GSTIN (15 characters).
-   * Strict format: 2-digit state code + 10-char PAN + 1-char entity number + Z + 1-char checksum.
+   * Validate whether a string is a valid, authentic supplier/vendor name.
+   * Strictly rejects:
+   * - Address fragments (e.g. "Plot 4, Sector 62, Noida", "Suite 400", "123 Main Street")
+   * - Filenames & paths (e.g. "invoice.pdf", "20_SCANNED_CLEAN_INV-TEST-020.png")
+   * - Generic document labels (e.g. "TAX INVOICE", "BILLED TO", "SHIP TO")
+   * - GSTIN / Phone numbers / Bank strings
+   * - Punctuation/garbage/symbol sequences
+   */
+  public static isValidSupplierName(name: string | null | undefined): boolean {
+    if (!name || typeof name !== 'string') return false;
+    const clean = name.trim();
+    if (clean.length < 3 || clean.length > 100) return false;
+
+    // Must contain at least 3 alphabetic letters
+    if (!/[a-zA-Z].*[a-zA-Z].*[a-zA-Z]/.test(clean)) return false;
+
+    // 1. Disqualify Filenames & paths
+    if (/\.(?:pdf|png|jpg|jpeg|tiff|bmp|csv|xlsx|txt)$/i.test(clean)) return false;
+    if (/(?:^|[\/\\])(?:[a-zA-Z0-9_\-]+\.(?:pdf|png|jpg|jpeg))\b/i.test(clean)) return false;
+    if (/^(?:IMG_|SCAN_|DOC_|SCREENSHOT)/i.test(clean)) return false;
+
+    // 2. Disqualify Address fragments & location indicators
+    const addressKeywords = /\b(?:suite|floor|flat|plot|door|room|shop|block|sector|phase|cross|main\s*road|street|st\.|road|rd\.|avenue|ave\.|lane|highway|expressway|nagar|marg|industrial\s*area|tech\s*park|pincode|pin\s*code|pin[\s:]*\d{6}|zip[\s:]*\d{5,6})\b/i;
+    if (addressKeywords.test(clean)) return false;
+
+    // Disqualify starting with door/flat/plot number patterns
+    if (/^(?:#|plot\s*(?:no\.?|#)?|flat\s*(?:no\.?|#)?|door\s*(?:no\.?|#)?|suite\s*(?:no\.?|#)?|shop\s*(?:no\.?|#)?|building\s*(?:no\.?|#)?)\s*\d+/i.test(clean)) return false;
+
+    // Disqualify bare city or state names
+    if (/^(?:bangalore|bengaluru|mumbai|delhi|new\s*delhi|hyderabad|chennai|kolkata|noida|greater\s*noida|gurgaon|gurugram|pune|ahmedabad|karnataka|maharashtra|tamil\s*nadu|telangana|uttar\s*pradesh|haryana|gujarat|india|usa|united\s*states)$/i.test(clean)) return false;
+
+    // 3. Disqualify Generic headers and section keywords
+    const genericHeaders = /^(?:tax\s*invoice|invoice|tax|bill\s*of\s*supply|bill|purchase\s*order|po|original\s*for\s*recipient|duplicate\s*for\s*transporter|triplicate|billed\s*to|bill\s*to|ship\s*to|shipped\s*to|sold\s*to|buyer|consignee|client|customer|vendor|supplier|seller|details|particulars|line\s*items?|description|subtotal|total|amount|grand\s*total|tax\s*amount|gst|gstin|pan|cin|date|invoice\s*date|due\s*date|po\s*number|order\s*number|bank\s*details|account\s*number|ifsc|terms|payment\s*terms|authorized\s*signatory|thank\s*you|signature)$/i;
+    if (genericHeaders.test(clean)) return false;
+
+    // 4. Disqualify if it matches a GSTIN or phone number directly
+    if (/\b\d{2}[A-Z]{5}\d{4}[A-Z]{1}[A-Z\d]{1}[Z]{1}[A-Z\d]{1}\b/.test(clean)) return false;
+    if (/^\+?91[\s-]?\d{10}$/.test(clean)) return false;
+
+    // 5. Symbol density check: reject if non-alphanumeric ratio exceeds 30%
+    const symbolCount = (clean.match(/[^a-zA-Z0-9\s.&,\-]/g) || []).length;
+    if (symbolCount / clean.length > 0.3) return false;
+
+    return true;
+  }
+
+  /**
+   * Scores how likely a candidate text line represents a genuine supplier name.
+   * Higher score = stronger match.
+   */
+  public static scoreSupplierCandidate(line: string): number {
+    if (!this.isValidSupplierName(line)) return -100;
+    let score = 10;
+    const clean = line.trim();
+
+    // Bonus for standard corporate suffixes
+    if (/\b(?:pvt\s*ltd|private\s*limited|ltd|limited|llc|inc|llp|corp|corporation)\b/i.test(clean)) {
+      score += 40;
+    }
+
+    // Bonus for industry terms
+    if (/\b(?:technologies|solutions|systems|services|infra|industries|enterprises|labs|traders|consulting|logistics|hardware|software|cloud)\b/i.test(clean)) {
+      score += 25;
+    }
+
+    // Title Case bonus
+    if (/^[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+/.test(clean)) {
+      score += 15;
+    }
+
+    return score;
+  }
+
+  /**
+   * Validate whether a string is a strict, valid 15-character Indian GSTIN.
+   */
+  public static isValidGSTIN(gstin: string | null | undefined): boolean {
+    if (!gstin || typeof gstin !== 'string') return false;
+    const clean = gstin.toUpperCase().trim();
+    if (!/^\d{2}[A-Z]{5}\d{4}[A-Z]{1}[A-Z\d]{1}[Z]{1}[A-Z\d]{1}$/.test(clean)) {
+      return false;
+    }
+    const stateCode = parseInt(clean.substring(0, 2), 10);
+    return (stateCode >= 1 && stateCode <= 38) || stateCode === 97 || stateCode === 99;
+  }
+
+  /**
+   * Validate whether a string is a plausible PO Number.
+   */
+  public static isValidPONumber(poNumber: string | null | undefined): boolean {
+    if (!poNumber || typeof poNumber !== 'string') return false;
+    const clean = poNumber.trim();
+    if (clean.length < 3 || clean.length > 30) return false;
+    if (/^\d{4}[-/.]\d{2}[-/.]\d{2}$/.test(clean)) return false; // Reject dates
+    if (this.isValidGSTIN(clean)) return false; // Reject GSTINs
+    const compact = clean.replace(/[\s-]/g, '');
+    if (/^(?:\+?91)?[6-9]\d{9}$/.test(compact)) return false; // Reject phone numbers
+    if (/^(?:po|purchase\s*order|order|ref|reference|null|none|n\/a|undefined|unknown|invoice|bill)$/i.test(clean)) return false;
+    return true;
+  }
+
+  /**
+   * Validate whether a string is a plausible Invoice Number.
+   */
+  public static isValidInvoiceNumber(invoiceNumber: string | null | undefined): boolean {
+    if (!invoiceNumber || typeof invoiceNumber !== 'string') return false;
+    const clean = invoiceNumber.trim();
+    if (clean.length < 2 || clean.length > 35) return false;
+    if (/^\d{4}[-/.]\d{2}[-/.]\d{2}$/.test(clean)) return false; // Reject dates
+    if (this.isValidGSTIN(clean)) return false; // Reject GSTINs
+    const compact = clean.replace(/[\s-]/g, '');
+    if (/^(?:\+?91)?[6-9]\d{9}$/.test(compact)) return false; // Reject phone numbers
+    if (/^(?:invoice|tax\s*invoice|bill|inv|null|none|n\/a|undefined|unknown|date|total|amount)$/i.test(clean)) return false;
+    return true;
+  }
+
+  /**
+   * Extract and validate Indian GSTIN (15 characters) with positional OCR repair.
+   * Strict format: 2-digit state code (01-38, 97, 99) + 10-char PAN + 1-char entity number + Z + 1-char checksum.
    */
   public static normalizeGSTIN(raw: string | null | undefined): string | null {
     if (!raw || typeof raw !== 'string') return null;
     let clean = raw.toUpperCase().replace(/[^A-Z0-9]/g, '');
 
-    // 1. Direct standard 15-character match
-    const directMatch = clean.match(/\b\d{2}[A-Z]{5}\d{4}[A-Z]{1}[A-Z\d]{1}[Z]{1}[A-Z\d]{1}\b/);
-    if (directMatch) {
-      return directMatch[0];
+    // 1. Direct standard 15-character match with state code verification
+    if (/^\d{2}[A-Z]{5}\d{4}[A-Z]{1}[A-Z\d]{1}[Z]{1}[A-Z\d]{1}$/.test(clean)) {
+      const stateCode = parseInt(clean.substring(0, 2), 10);
+      if ((stateCode >= 1 && stateCode <= 38) || stateCode === 97 || stateCode === 99) {
+        return clean;
+      }
     }
 
-    // 2. OCR Repair: Position 14 in Indian GSTIN is ALWAYS 'Z', but OCR engines frequently read 'Z' as '2'
-    if (clean.length === 15 && /^\d{2}[A-Z]{5}\d{4}[A-Z]{1}[A-Z\d]{1}[2Z]{1}[A-Z\d]{1}$/.test(clean)) {
-      clean = clean.substring(0, 13) + 'Z' + clean.substring(14);
-      return clean;
+    // 2. Positional OCR Repair for 15-character candidate:
+    // Pos 0-1 (State digits): O->0, I/L->1, Z->2, S->5, B->8
+    // Pos 2-6 (PAN 5 alpha): 0->O, 1->I, 2->Z, 5->S, 8->B
+    // Pos 7-10 (PAN 4 digits): O->0, I/L->1, Z->2, S->5, B->8
+    // Pos 11 (PAN 1 alpha): 0->O, 1->I, 2->Z, 5->S, 8->B
+    // Pos 13 (Default Z): 2->Z
+    if (clean.length === 15) {
+      const digitsMap: Record<string, string> = { O: '0', I: '1', L: '1', Z: '2', S: '5', B: '8' };
+      const alphaMap: Record<string, string> = { '0': 'O', '1': 'I', '2': 'Z', '5': 'S', '8': 'B' };
+
+      const chars = clean.split('');
+
+      // State digits
+      chars[0] = digitsMap[chars[0]] || chars[0];
+      chars[1] = digitsMap[chars[1]] || chars[1];
+
+      // PAN letters
+      for (let i = 2; i <= 6; i++) {
+        chars[i] = alphaMap[chars[i]] || chars[i];
+      }
+
+      // PAN digits
+      for (let i = 7; i <= 10; i++) {
+        chars[i] = digitsMap[chars[i]] || chars[i];
+      }
+
+      // PAN letter
+      chars[11] = alphaMap[chars[11]] || chars[11];
+
+      // Default Z
+      if (chars[13] === '2') chars[13] = 'Z';
+
+      const repaired = chars.join('');
+      if (/^\d{2}[A-Z]{5}\d{4}[A-Z]{1}[A-Z\d]{1}[Z]{1}[A-Z\d]{1}$/.test(repaired)) {
+        const stateCode = parseInt(repaired.substring(0, 2), 10);
+        if ((stateCode >= 1 && stateCode <= 38) || stateCode === 97 || stateCode === 99) {
+          return repaired;
+        }
+      }
     }
 
-    const ocrMatch = clean.match(/\b\d{2}[A-Z]{5}\d{4}[A-Z]{1}[A-Z\d]{1}[2Z]{1}[A-Z\d]{1}\b/);
-    if (ocrMatch) {
-      let val = ocrMatch[0];
+    // 3. Search within longer text
+    const regex = /\b(\d{2})([A-Z]{5})(\d{4})([A-Z]{1})([A-Z\d]{1})([2Z]{1})([A-Z\d]{1})\b/g;
+    let match;
+    while ((match = regex.exec(clean)) !== null) {
+      let val = match[0];
       val = val.substring(0, 13) + 'Z' + val.substring(14);
-      return val;
+      const stateCode = parseInt(val.substring(0, 2), 10);
+      if ((stateCode >= 1 && stateCode <= 38) || stateCode === 97 || stateCode === 99) {
+        return val;
+      }
     }
 
     return null;
@@ -264,7 +423,6 @@ export class NormalizationHelper {
     const match = raw.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
     if (!match) return null;
     const email = match[0].toLowerCase();
-    // Filter out common dummy/system domains unless valid
     if (email.endsWith('.example') || email.includes('localhost')) return email;
     return email;
   }
@@ -274,7 +432,6 @@ export class NormalizationHelper {
    */
   public static normalizePhone(raw: string | null | undefined): string | null {
     if (!raw || typeof raw !== 'string') return null;
-    // Look for explicit phone labels or formatted Indian numbers
     const labeledMatch = raw.match(/(?:phone|tel|telephone|mobile|contact|cell)[\s#.:\-_]*(?:\+91[\s-]?)?([6-9]\d{9})\b/i);
     if (labeledMatch) {
       return `+91 ${labeledMatch[1]}`;
@@ -290,6 +447,7 @@ export class NormalizationHelper {
 
   /**
    * Clean and normalize company/supplier names (stripping labels like "Seller:", "Supplier:").
+   * Automatically passes through strict isValidSupplierName validation.
    */
   public static cleanCompanyName(raw: string | null | undefined): string | null {
     if (!raw || typeof raw !== 'string') return null;
@@ -297,15 +455,10 @@ export class NormalizationHelper {
     if (!name) return null;
 
     // Remove prefixes
-    name = name.replace(/^(?:seller|supplier|vendor|from|company|biller|issued\s*by|sold\s*by)[\s#.:\-_]*/i, '');
+    name = name.replace(/^(?:seller|supplier|vendor|from|company|biller|issued\s*by|sold\s*by|billed\s*by)[\s#.:\-_]*/i, '');
     name = name.replace(/\s+/g, ' ').trim();
 
-    // Reject filler lines or lines that are clearly addresses/headers
-    if (
-      name.length < 3 ||
-      /^[0-9\W]+$/.test(name) ||
-      /^(?:tax|invoice|bill|date|due|gstin|phone|email|subtotal|total|item)/i.test(name)
-    ) {
+    if (!this.isValidSupplierName(name)) {
       return null;
     }
 

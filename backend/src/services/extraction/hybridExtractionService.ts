@@ -19,7 +19,12 @@ export interface HybridExtractionResult<T> {
   quality: 'high' | 'incomplete' | 'ambiguous';
   aiAssisted: boolean;
   documentType: DocumentType;
+  extractedText?: string;
   missingFields?: string[];
+  missingCriticalFields?: string[];
+  failedFields?: string[];
+  fieldValidationStatus?: Record<string, any>;
+  validationErrors?: string[];
   warnings?: string[];
   aiCallsCount?: number;
 }
@@ -27,11 +32,6 @@ export interface HybridExtractionResult<T> {
 class HybridExtractionService {
   /**
    * Main Deterministic-First Hybrid Extraction Pipeline.
-   * Pipeline:
-   * 1. PDF Text Extraction (for text PDFs) -> 0 AI calls
-   * 2. Local OCR Extraction (for scanned PDFs, PNG, JPG, JPEG) -> 0 AI calls
-   * 3. Deterministic Extraction -> Evaluate Quality (Critical vs Optional)
-   * 4. Selective AI Fallback ONLY if critical fields are genuinely missing / ambiguous -> Max 1 Gemini -> Immediate Groq fallback.
    */
   public async extractDocument(
     fileBuffer: Buffer,
@@ -44,7 +44,7 @@ class HybridExtractionService {
       userId?: string;
     }
   ): Promise<HybridExtractionResult<ExtractedInvoiceData | ExtractedPOData>> {
-    const { documentId, originalFileName, docTypeHint, companyId, userId } = options;
+    const { originalFileName, docTypeHint, companyId, userId } = options;
 
     console.log(`[DOC] Processing: ${originalFileName}`);
     console.log(`[DOC] MIME: ${mimeType}, size: ${fileBuffer.length} bytes`);
@@ -81,7 +81,7 @@ class HybridExtractionService {
         console.log(`[DOC] Extraction strategy: OCR (scanned PDF rasterization)`);
       }
       const ocrRes = await ocrService.extractTextWithOCR(fileBuffer, mimeType);
-      if (ocrRes.isUsable) {
+      if (ocrRes.isUsable && ocrRes.text) {
         extractedText = ocrRes.text;
         isUsableText = true;
         sourceMethod = 'ocr';
@@ -92,26 +92,13 @@ class HybridExtractionService {
     }
 
     // -------------------------------------------------------------
-    // Step 2: Determine Document Type (Text ground truth takes priority)
+    // Step 2: Document Type Classification
     // -------------------------------------------------------------
-    let detectedType: DocumentType = 'unknown';
+    let detectedType = docTypeHint && docTypeHint !== 'unknown'
+      ? docTypeHint
+      : deterministicParserService.classifyDocumentType(extractedText, originalFileName);
 
-    if (isUsableText) {
-      const typeFromText = deterministicParserService.detectDocumentTypeFromText(extractedText);
-      if (typeFromText !== 'unknown') {
-        detectedType = typeFromText;
-        console.log(`[DOC] Detected document type from text: ${detectedType}`);
-      }
-    }
-
-    if (detectedType === 'unknown' && docTypeHint && docTypeHint !== 'unknown') {
-      detectedType = docTypeHint;
-      console.log(`[DOC] Detected document type from filename hint: ${detectedType}`);
-    }
-
-    if (detectedType === 'unknown') {
-      detectedType = 'invoice';
-    }
+    console.log(`[DOC] Document type classified: ${detectedType.toUpperCase()}`);
 
     // -------------------------------------------------------------
     // Step 3: Deterministic Field Extraction & Quality Assessment
@@ -119,15 +106,16 @@ class HybridExtractionService {
     if (isUsableText) {
       if (detectedType === 'purchase_order') {
         const detResult = deterministicParserService.parsePOText(extractedText, sourceMethod);
+        const evalRes = ExtractionQualityEvaluator.evaluatePOQuality(extractedText, detResult.data);
 
         console.log(`[DOC] Source: ${sourceMethod === 'ocr' ? 'OCR' : 'PDF_TEXT'}`);
         console.log(`[DOC] OCR chars: ${extractedText.length}`);
-        console.log(`[DOC] Deterministic OCR extraction: ${detResult.quality.toUpperCase()}`);
-        console.log(`[DOC] Missing fields: [${detResult.missingOrAmbiguousFields.join(', ')}]`);
-        console.log(`[DOC] AI fallback required: ${detResult.needsAI ? 'YES' : 'NO'}`);
-        console.log(`[DOC] Final extraction confidence: ${detResult.confidence.toFixed(2)}`);
+        console.log(`[DOC] Deterministic OCR extraction: ${evalRes.quality.toUpperCase()}`);
+        console.log(`[DOC] Missing fields: [${evalRes.missingFields.join(', ')}]`);
+        console.log(`[DOC] AI fallback required: ${evalRes.needsAiFallback ? 'YES' : 'NO'}`);
+        console.log(`[DOC] Final extraction confidence: ${evalRes.confidence.toFixed(2)}`);
 
-        if (detResult.quality === 'high' && !detResult.needsAI) {
+        if (evalRes.quality === 'high' && !evalRes.needsAiFallback) {
           console.log(`[DOC] Deterministic extraction quality: HIGH`);
           console.log(`[DOC] AI calls required: 0`);
           console.log(`[DOC] PO extracted: PO# "${detResult.data.poNumber}", Supplier: "${detResult.data.supplierName}", Total: ₹${detResult.data.total}`);
@@ -135,31 +123,37 @@ class HybridExtractionService {
           return {
             data: detResult.data,
             extractionMethod: sourceMethod,
-            confidence: detResult.confidence,
+            confidence: evalRes.confidence,
             quality: 'high',
             aiAssisted: false,
             documentType: 'purchase_order',
             model: 'deterministic_parser',
-            missingFields: [],
-            warnings: detResult.warnings,
+            extractedText,
+            missingFields: evalRes.missingFields,
+            missingCriticalFields: evalRes.missingCriticalFields,
+            failedFields: evalRes.failedFields,
+            fieldValidationStatus: evalRes.fieldValidationStatus,
+            validationErrors: evalRes.validationErrors,
+            warnings: evalRes.warnings,
             aiCallsCount: 0,
           };
         } else {
-          console.log(`[DOC] Deterministic PO extraction: ${detResult.quality.toUpperCase()} (missing critical: ${detResult.missingOrAmbiguousFields.join(', ')})`);
-          console.log(`[DOC] AI fields requested: [${detResult.missingOrAmbiguousFields.join(', ')}]`);
+          console.log(`[DOC] Deterministic PO extraction: ${evalRes.quality.toUpperCase()} (missing critical: ${evalRes.missingCriticalFields.join(', ')})`);
+          console.log(`[DOC] AI fields requested: [${evalRes.missingCriticalFields.join(', ')}]`);
           console.log(`[DOC] AI calls required: 1`);
         }
       } else {
         const detResult = deterministicParserService.parseInvoiceText(extractedText, sourceMethod);
+        const evalRes = ExtractionQualityEvaluator.evaluateInvoiceQuality(extractedText, detResult.data);
 
         console.log(`[DOC] Source: ${sourceMethod === 'ocr' ? 'OCR' : 'PDF_TEXT'}`);
         console.log(`[DOC] OCR chars: ${extractedText.length}`);
-        console.log(`[DOC] Deterministic OCR extraction: ${detResult.quality.toUpperCase()}`);
-        console.log(`[DOC] Missing fields: [${detResult.missingOrAmbiguousFields.join(', ')}]`);
-        console.log(`[DOC] AI fallback required: ${detResult.needsAI ? 'YES' : 'NO'}`);
-        console.log(`[DOC] Final extraction confidence: ${detResult.confidence.toFixed(2)}`);
+        console.log(`[DOC] Deterministic OCR extraction: ${evalRes.quality.toUpperCase()}`);
+        console.log(`[DOC] Missing fields: [${evalRes.missingFields.join(', ')}]`);
+        console.log(`[DOC] AI fallback required: ${evalRes.needsAiFallback ? 'YES' : 'NO'}`);
+        console.log(`[DOC] Final extraction confidence: ${evalRes.confidence.toFixed(2)}`);
 
-        if (detResult.quality === 'high' && !detResult.needsAI) {
+        if (evalRes.quality === 'high' && !evalRes.needsAiFallback) {
           console.log(`[DOC] Deterministic extraction quality: HIGH`);
           console.log(`[DOC] AI calls required: 0`);
           console.log(`[DOC] Invoice extracted: Inv# "${detResult.data.invoiceNumber}", Supplier: "${detResult.data.supplierName}", Amount: ₹${detResult.data.amount}`);
@@ -167,42 +161,42 @@ class HybridExtractionService {
           return {
             data: detResult.data,
             extractionMethod: sourceMethod,
-            confidence: detResult.confidence,
+            confidence: evalRes.confidence,
             quality: 'high',
             aiAssisted: false,
             documentType: 'invoice',
             model: 'deterministic_parser',
-            missingFields: [],
-            warnings: detResult.warnings,
+            extractedText,
+            missingFields: evalRes.missingFields,
+            missingCriticalFields: evalRes.missingCriticalFields,
+            failedFields: evalRes.failedFields,
+            fieldValidationStatus: evalRes.fieldValidationStatus,
+            validationErrors: evalRes.validationErrors,
+            warnings: evalRes.warnings,
             aiCallsCount: 0,
           };
         } else {
-          console.log(`[DOC] Deterministic invoice extraction: ${detResult.quality.toUpperCase()} (missing critical: ${detResult.missingOrAmbiguousFields.join(', ')})`);
-          console.log(`[DOC] AI fields requested: [${detResult.missingOrAmbiguousFields.join(', ')}]`);
+          console.log(`[DOC] Deterministic invoice extraction: ${evalRes.quality.toUpperCase()} (missing critical: ${evalRes.missingCriticalFields.join(', ')})`);
+          console.log(`[DOC] AI fields requested: [${evalRes.missingCriticalFields.join(', ')}]`);
           console.log(`[DOC] AI calls required: 1`);
         }
       }
-    } else {
-      console.log(`[DOC] Deterministic extraction: UNREADABLE / NO TEXT`);
-      console.log(`[DOC] Extraction strategy: AI`);
-      console.log(`[DOC] AI fallback required: YES`);
-      console.log(`[DOC] AI calls required: 1`);
     }
 
     // -------------------------------------------------------------
-    // Step 4: Selective AI Fallback (1 Gemini attempt -> Immediate Groq fallback on 429/failure)
-    // Gemini: 1 attempt max. Groq: 1 attempt max. No retry storm.
+    // Step 4: Targeted AI Fallback (Gemini -> Groq fallback)
     // -------------------------------------------------------------
+    console.log(`[DOC] Selective AI Fallback triggered for ${originalFileName}`);
     aiCallsCount = 1;
-    console.log(`[AI] Gemini attempt: 1/1`);
 
     if (detectedType === 'purchase_order') {
-      const aiRes = await aiExtractionService.extractPODocument(fileBuffer, mimeType, {
-        companyId,
-        userId,
-      });
+      const aiRes = await aiExtractionService.extractPurchaseOrderWithAI(
+        fileBuffer,
+        mimeType,
+        extractedText,
+        originalFileName
+      );
 
-      // Merge with any valid deterministic fields if available (local has priority)
       let mergedData = aiRes.data;
       if (isUsableText) {
         const detResult = deterministicParserService.parsePOText(extractedText, sourceMethod);
@@ -224,17 +218,23 @@ class HybridExtractionService {
         quality: qualityCheck.quality,
         aiAssisted: true,
         documentType: 'purchase_order',
+        extractedText,
         missingFields: qualityCheck.missingFields,
+        missingCriticalFields: qualityCheck.missingCriticalFields,
+        failedFields: qualityCheck.failedFields,
+        fieldValidationStatus: qualityCheck.fieldValidationStatus,
+        validationErrors: qualityCheck.validationErrors,
         warnings: qualityCheck.warnings,
         aiCallsCount: 1,
       };
     } else {
-      const aiRes = await aiExtractionService.extractInvoiceDocument(fileBuffer, mimeType, {
-        companyId,
-        userId,
-      });
+      const aiRes = await aiExtractionService.extractInvoiceWithAI(
+        fileBuffer,
+        mimeType,
+        extractedText,
+        originalFileName
+      );
 
-      // Merge with any valid deterministic fields if available (local has priority)
       let mergedData = aiRes.data;
       if (isUsableText) {
         const detResult = deterministicParserService.parseInvoiceText(extractedText, sourceMethod);
@@ -256,7 +256,12 @@ class HybridExtractionService {
         quality: qualityCheck.quality,
         aiAssisted: true,
         documentType: 'invoice',
+        extractedText,
         missingFields: qualityCheck.missingFields,
+        missingCriticalFields: qualityCheck.missingCriticalFields,
+        failedFields: qualityCheck.failedFields,
+        fieldValidationStatus: qualityCheck.fieldValidationStatus,
+        validationErrors: qualityCheck.validationErrors,
         warnings: qualityCheck.warnings,
         aiCallsCount: 1,
       };

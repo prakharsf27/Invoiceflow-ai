@@ -12,26 +12,27 @@ export const getDashboardMetrics = async (req: Request, res: Response): Promise<
     const suppliers = await SupplierModel.find({ companyId });
     const exceptions = await ExceptionModel.find({ companyId });
 
-    const totalInvoices = invoices.length;
-    const totalPayables = invoices
+    const validInvoices = invoices.filter((i) => i.status !== 'failed' && i.status !== 'rejected');
+    const totalInvoices = validInvoices.length;
+    const totalPayables = validInvoices
       .filter((i) => i.paymentStatus !== 'paid' && i.status !== 'paid')
-      .reduce((sum, i) => sum + i.amount, 0);
+      .reduce((sum, i) => sum + (typeof i.amount === 'number' && !isNaN(i.amount) ? i.amount : 0), 0);
 
-    const autoClearedCount = invoices.filter((i) => i.status === 'ready' || i.status === 'paid').length;
-    const needsReviewCount = invoices.filter((i) => i.status === 'review' || i.status === 'on_hold' || i.status === 'hold').length;
-    const criticalCount = invoices.filter((i) => i.status === 'critical' || i.riskLevel === 'high').length;
-    const overdueAmount = invoices
+    const autoClearedCount = validInvoices.filter((i) => i.status === 'ready' || i.status === 'paid').length;
+    const needsReviewCount = validInvoices.filter((i) => i.status === 'review' || i.status === 'on_hold' || i.status === 'hold').length;
+    const criticalCount = validInvoices.filter((i) => i.status === 'critical' || i.riskLevel === 'high').length;
+    const overdueAmount = validInvoices
       .filter((i) => i.status === 'overdue' || i.paymentStatus === 'overdue')
-      .reduce((sum, i) => sum + i.amount, 0);
+      .reduce((sum, i) => sum + (typeof i.amount === 'number' && !isNaN(i.amount) ? i.amount : 0), 0);
 
     const timeSavedHours = Number((autoClearedCount * 0.4 + (totalInvoices > 0 ? 0.5 : 0)).toFixed(1));
     const automationRate = totalInvoices > 0 ? Number(((autoClearedCount / totalInvoices) * 100).toFixed(1)) : 100.0;
 
     // Build timeline cashflow metrics from invoice due dates
     const timelineMap: Record<string, number> = {};
-    invoices.forEach((inv) => {
+    validInvoices.forEach((inv) => {
       const dateKey = inv.dueDate || new Date().toISOString().split('T')[0];
-      timelineMap[dateKey] = (timelineMap[dateKey] || 0) + inv.amount;
+      timelineMap[dateKey] = (timelineMap[dateKey] || 0) + (typeof inv.amount === 'number' && !isNaN(inv.amount) ? inv.amount : 0);
     });
 
     const cashflowTimeline = Object.entries(timelineMap).map(([date, amount]) => ({
