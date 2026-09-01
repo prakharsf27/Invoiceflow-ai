@@ -106,7 +106,20 @@ class POMatchingService {
       extractedInvoice?.amount ?? extractedInvoice?.total ?? 0
     );
 
+    // If rawPoNumber was present on invoice but invalid/corrupted (e.g. "PPE" or date)
+    if (rawPoNumber && !isPoValid) {
+      console.log(`[PO-MATCH DEBUG] Invalid/corrupted PO number rejected: "${rawPoNumber}"`);
+      return {
+        poNumber: undefined,
+        matchStatus: 'no_match',
+        matchScore: 0,
+        matchedFields: [],
+        discrepancies: ['PO reference could not be reliably extracted from OCR.'],
+      };
+    }
+
     let candidatePO: any = null;
+    let isFallbackMatch = false;
 
     // 1. Priority 1: Exact / Alphanumeric PO Number Match in PurchaseOrders collection
     if (rawPoNumber && isPoValid) {
@@ -152,7 +165,7 @@ class POMatchingService {
       }
     }
 
-    // 3. Priority 3: Match by Supplier GSTIN / Name ONLY if valid and genuine supplier entity
+    // 3. Priority 3: Candidate suggestion by Supplier GSTIN / Name ONLY if valid and genuine supplier entity
     if (!candidatePO && !rawPoNumber && (isGstinValid || isSupplierValid)) {
       const orConds: any[] = [];
       if (isGstinValid) orConds.push({ supplierGstin: new RegExp(`^${rawSupplierGstin}$`, 'i') });
@@ -163,6 +176,9 @@ class POMatchingService {
           companyId,
           $or: orConds,
         } as any);
+        if (candidatePO) {
+          isFallbackMatch = true;
+        }
       }
     }
 
@@ -172,7 +188,7 @@ class POMatchingService {
       const discrepancyMsg = rawPoNumber
         ? (isPoValid
             ? `Purchase Order ${rawPoNumber} referenced on invoice was not found in company procurement records.`
-            : `PO reference "${rawPoNumber}" is invalid or ambiguous and was not matched against procurement records.`)
+            : 'PO reference could not be reliably extracted from OCR.')
         : 'No purchase order reference or supplier PO found in company records.';
 
       return {
@@ -360,14 +376,18 @@ class POMatchingService {
 
     score += lineItemScore;
 
+    if (isFallbackMatch) {
+      discrepancies.push('PO candidate suggested via supplier fallback (No explicit PO number on invoice). Requires manual confirmation.');
+    }
+
     // Determine final status based on score and discrepancies
     let matchStatus: IPOMatchResult['matchStatus'] = 'no_match';
-    if (discrepancies.length === 0 && score >= 85) {
+    if (!isFallbackMatch && discrepancies.length === 0 && score >= 85) {
       matchStatus = 'matched';
       score = 100;
-    } else if (discrepancies.length > 0) {
+    } else if (discrepancies.some((d) => d.includes('MISMATCH') || d.includes('ITEM') || d.includes('differs'))) {
       matchStatus = 'mismatch';
-    } else if (score >= 50 || poNumMatch) {
+    } else if (score >= 50 || poNumMatch || isFallbackMatch) {
       matchStatus = 'partial_match';
     } else {
       matchStatus = 'needs_review';

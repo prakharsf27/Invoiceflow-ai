@@ -197,15 +197,19 @@ export class DeterministicParserService {
     // 5. PO Number / Reference Extraction (Optional for invoice)
     let poNumber: string | null = null;
     const poPatterns = [
-      /\b(?:purchase\s*order(?:\s*ref|\s*number|\s*no\.?|\s*#)?|p\.?o\.?\s*(?:reference|number|no\.?|#)?|po\b)[\s:]*(?:[\r\n]+\s*)?([a-zA-Z0-9\-_/]{3,30})/i,
+      /\b(?:purchase\s*order(?:\s*ref(?:erence)?|\s*number|\s*no\.?|\s*#)?|p\.?o\.?\s*(?:ref(?:erence)?|number|no\.?|#)?|order\s*ref(?:erence)?|po\s*(?:ref(?:erence)?|number|no\.?|#)|po(?!\s*(?:box|reference|number|no|ref)))\b[\s:：]*(?:[\r\n]+\s*)?([a-zA-Z0-9\-_/]{3,30})/i,
       /\bpo[-_]\d{4}[-_][a-zA-Z0-9\-_]{3,20}\b/i,
-      /\b(?:order|po)\s*ref(?:erence)?[\s:]*(?:[\r\n]+\s*)?([a-zA-Z0-9\-_/]{3,30})/i,
+      /\bpo[-_\s][a-zA-Z0-9\-_]{3,20}\b/i,
+      /\b(?:order|po)\s*ref(?:erence)?[\s:：]*(?:[\r\n]+\s*)?([a-zA-Z0-9\-_/]{3,30})/i,
     ];
     for (const pat of poPatterns) {
       const match = normalizedText.match(pat);
       if (match) {
-        poNumber = NormalizationHelper.normalizePONumber(match[1] || match[0]);
-        if (poNumber) break;
+        const candidate = NormalizationHelper.normalizePONumber(match[1] || match[0]);
+        if (candidate && NormalizationHelper.isValidPONumber(candidate)) {
+          poNumber = candidate;
+          break;
+        }
       }
     }
 
@@ -886,7 +890,10 @@ export class DeterministicParserService {
       if (!rawLine || rawLine.length < 5) continue;
 
       // Skip table headers or invoice summary lines
-      if (/^(?:item|code|description|particulars|qty|quantity|units|unit\s*price|rate|subtotal|sub\s*total|tax\b|gst\b|cgst\b|sgst\b|igst\b|grand\s*total|total\s*amount|net\s*amount|notes\b|payment\s*terms|terms\b|bank\b|seller|buyer|supplier|line\s*items)/i.test(rawLine)) {
+      if (
+        /^(?:item|code|description|particulars|qty|quantity|units|unit\s*price|rate|subtotal|sub\s*total|grand\s*total|total\s*amount|net\s*amount|notes\b|payment\s*terms|terms\b|bank\b|seller|buyer|supplier)\s*[:：]?$/i.test(rawLine) ||
+        (/\b(?:description|particulars|item\s*name)\b/i.test(rawLine) && /\b(?:qty|quantity|units|rate|price|amount|total)\b/i.test(rawLine))
+      ) {
         continue;
       }
 
@@ -899,8 +906,8 @@ export class DeterministicParserService {
         .replace(/\s+/g, ' ')
         .trim();
 
-      // 1Z. Single-line key-value format (e.g. "1. Enterprise Cloud Server Qty: 10 Unit Price: 50,000.00 Tax Rate: 18% Tax Amount: 90,000.00 Total: 590,000.00")
-      const kvMatch = cleaned.match(/^(?:(\d+[.)]|[A-Za-z0-9\-_]{2,12})\s+)?(.+?)\s+Qty:\s*(\d+(?:\.\d+)?)\s+Unit\s*Price:\s*([\d,]+(?:\.\d+)?)\s*(?:Tax\s*Rate:\s*(\d+(?:\.\d+)?%?))?\s*(?:Tax\s*Amount:\s*([\d,]+(?:\.\d+)?))?\s*Total:\s*([\d,]+(?:\.\d+)?)$/i);
+      // 1Z. Single-line key-value format (e.g. "1. Enterprise Cloud Server Qty: 10 Unit Price: 50,000.00 Tax: 18% Total: 590,000.00")
+      const kvMatch = cleaned.match(/^(?:(?:line\s*item|item)[:\s]*)?(?:(\d+[.)]|[A-Za-z0-9\-_]{2,12})\s+)?(.+?)\s+Qty:\s*(\d+(?:\.\d+)?)\s+(?:Unit\s*Price|Rate|Price):\s*([\d,]+(?:\.\d+)?)\s*(?:(?:Tax\s*(?:Rate|Amount)?|GST|Tax):\s*(\d+(?:\.\d+)?%?))?\s*(?:(?:Tax\s*Amount):\s*([\d,]+(?:\.\d+)?))?\s*(?:Total|Amount):\s*([\d,]+(?:\.\d+)?)$/i);
       if (kvMatch) {
         const { itemCode, description } = this.cleanCodeAndDesc(kvMatch[1], kvMatch[2]);
         const qty = parseFloat(kvMatch[3]) || 1;
@@ -997,8 +1004,8 @@ export class DeterministicParserService {
 
     // Strategy 2: Multi-line / Block parsing (if Strategy 1 found 0 items)
     if (items.length === 0) {
-      // 2A. Block with Tax Rate / Amount:
-      const blockRegexWithTax = /(?:^|\n)[^\S\r\n]*(?:(?:line\s*item|item)[:\s]*)?(?:(\d+)[.)]\s+)?([^\r\n]{3,80}?)[^\S\r\n]*(?:\r?\n)+[^\S\r\n]*(?:Qty|Quantity)[\s:]*(\d+(?:\.\d+)?)[^\S\r\n]*(?:\r?\n)+[^\S\r\n]*(?:Unit\s*Price|Rate|Price)[\s:]*(?:[^\d\r\n]*?)?([\d,]+(?:\.\d+)?)[^\S\r\n]*(?:\r?\n)+[^\S\r\n]*(?:Tax\s*(?:Rate|Amount)?|GST)[\s:]*(\d+(?:\.\d+)?%?)(?:[^\S\r\n]*(?:\r?\n)+[^\S\r\n]*(?:Tax\s*Amount)[\s:]*(?:[^\d\r\n]*?)?([\d,]+(?:\.\d+)?))?[^\S\r\n]*(?:\r?\n)+[^\S\r\n]*(?:Total|Amount)[\s:]*(?:[^\d\r\n]*?)?([\d,]+(?:\.\d+)?)/gi;
+      // 2A. Block with Tax Rate / Amount (allowing "Line item:" on previous line or inline):
+      const blockRegexWithTax = /(?:^|\n)[^\S\r\n]*(?:(?:line\s*item|item)[:\s]*(?:\r?\n)?)?(?:(\d+)[.)]\s+)?([^\r\n]{3,80}?)[^\S\r\n]*(?:\r?\n)+[^\S\r\n]*(?:Qty|Quantity)[\s:]*(\d+(?:\.\d+)?)[^\S\r\n]*(?:\r?\n)+[^\S\r\n]*(?:Unit\s*Price|Rate|Price)[\s:]*(?:[^\d\r\n]*?)?([\d,]+(?:\.\d+)?)[^\S\r\n]*(?:\r?\n)+[^\S\r\n]*(?:Tax\s*(?:Rate|Amount)?|GST|Tax)[\s:]*(\d+(?:\.\d+)?%?)(?:[^\S\r\n]*(?:\r?\n)+[^\S\r\n]*(?:Tax\s*Amount)[\s:]*(?:[^\d\r\n]*?)?([\d,]+(?:\.\d+)?))?[^\S\r\n]*(?:\r?\n)+[^\S\r\n]*(?:Total|Amount)[\s:]*(?:[^\d\r\n]*?)?([\d,]+(?:\.\d+)?)/gi;
       let bMatch;
       while ((bMatch = blockRegexWithTax.exec(text)) !== null) {
         const itemCode = bMatch[1] ? bMatch[1].trim() : null;
@@ -1028,7 +1035,7 @@ export class DeterministicParserService {
 
       // 2B. Block without Tax (if 2A found 0 items)
       if (items.length === 0) {
-        const blockRegexNoTax = /(?:^|\n)[^\S\r\n]*(?:(?:line\s*item|item)[:\s]*)?(?:(\d+)[.)]\s+)?([^\r\n]{3,80}?)[^\S\r\n]*(?:\r?\n)+[^\S\r\n]*(?:Qty|Quantity)[\s:]*(\d+(?:\.\d+)?)[^\S\r\n]*(?:\r?\n)+[^\S\r\n]*(?:Unit\s*Price|Rate|Price)[\s:]*(?:[^\d\r\n]*?)?([\d,]+(?:\.\d+)?)[^\S\r\n]*(?:\r?\n)+[^\S\r\n]*(?:Total|Amount)[\s:]*(?:[^\d\r\n]*?)?([\d,]+(?:\.\d+)?)/gi;
+        const blockRegexNoTax = /(?:^|\n)[^\S\r\n]*(?:(?:line\s*item|item)[:\s]*(?:\r?\n)?)?(?:(\d+)[.)]\s+)?([^\r\n]{3,80}?)[^\S\r\n]*(?:\r?\n)+[^\S\r\n]*(?:Qty|Quantity)[\s:]*(\d+(?:\.\d+)?)[^\S\r\n]*(?:\r?\n)+[^\S\r\n]*(?:Unit\s*Price|Rate|Price)[\s:]*(?:[^\d\r\n]*?)?([\d,]+(?:\.\d+)?)[^\S\r\n]*(?:\r?\n)+[^\S\r\n]*(?:Total|Amount)[\s:]*(?:[^\d\r\n]*?)?([\d,]+(?:\.\d+)?)/gi;
         let bMatchNoTax;
         while ((bMatchNoTax = blockRegexNoTax.exec(text)) !== null) {
           const itemCode = bMatchNoTax[1] ? bMatchNoTax[1].trim() : null;
@@ -1046,6 +1053,72 @@ export class DeterministicParserService {
             taxAmount: 0,
             total,
           });
+        }
+      }
+    }
+
+    // Strategy 3: Sequential window parser for OCR blocks (e.g. Line item labeled or itemized description blocks)
+    if (items.length === 0) {
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i].trim();
+        if (/^(?:line\s*items?|particulars|item\s*details?)[:\s]*$/i.test(line)) {
+          // Look at lines immediately following
+          let currentDesc: string | null = null;
+          let currentQty: number | null = null;
+          let currentPrice: number | null = null;
+          let currentTaxRate: number | null = null;
+          let currentTotal: number | null = null;
+
+          for (let j = i + 1; j < lines.length && j < i + 12; j++) {
+            const nextL = lines[j].trim();
+            if (/^(?:subtotal|sub\s*total|tax\b|gst\b|grand\s*total|total\b|notes|bank)/i.test(nextL)) {
+              break;
+            }
+
+            const qtyMatch = nextL.match(/^(?:qty|quantity)[\s:]*(\d+(?:\.\d+)?)/i);
+            if (qtyMatch) {
+              currentQty = parseFloat(qtyMatch[1]);
+              continue;
+            }
+
+            const priceMatch = nextL.match(/^(?:unit\s*price|rate|price)[\s:]*(?:[^\d\r\n]*?)?([\d,]+(?:\.\d+)?)/i);
+            if (priceMatch) {
+              currentPrice = NormalizationHelper.normalizeAmount(priceMatch[1]);
+              continue;
+            }
+
+            const taxMatch = nextL.match(/^(?:tax\s*(?:rate|amount)?|gst|tax)[\s:]*(\d+(?:\.\d+)?%?)/i);
+            if (taxMatch) {
+              currentTaxRate = parseFloat(taxMatch[1].replace('%', ''));
+              continue;
+            }
+
+            const totalMatch = nextL.match(/^(?:total|amount|line\s*total)[\s:]*(?:[^\d\r\n]*?)?([\d,]+(?:\.\d+)?)/i);
+            if (totalMatch) {
+              currentTotal = NormalizationHelper.normalizeAmount(totalMatch[1]);
+              continue;
+            }
+
+            // If it is a plausible description line
+            if (!currentDesc && nextL.length >= 3 && !/[:=]/.test(nextL) && !/^(?:tax|invoice|date|po|gstin|subtotal)/i.test(nextL)) {
+              currentDesc = nextL.replace(/^\d+[.)]\s*/, '');
+            }
+          }
+
+          if (currentDesc && (currentQty || currentPrice || currentTotal)) {
+            const finalQty = currentQty || 1;
+            const finalPrice = currentPrice || 0;
+            const finalTotal = currentTotal || (finalQty * finalPrice);
+            items.push({
+              itemCode: null,
+              description: currentDesc,
+              quantity: finalQty,
+              unitPrice: finalPrice,
+              taxRate: currentTaxRate,
+              taxAmount: currentTaxRate ? Math.round((finalQty * finalPrice * currentTaxRate / 100) * 100) / 100 : 0,
+              total: finalTotal,
+            });
+          }
         }
       }
     }

@@ -123,15 +123,14 @@ export class ExtractionQualityEvaluator {
       signals.push('section_marker:line_items');
     }
 
-    // 2. Table Column Header Keywords
+    // 2. Table Column Header Keywords (requiring genuine column headers, not invoice summary tags)
     const headerKeywords = [
       { name: 'qty', pattern: /\b(?:qty|quantity|units|nos|qnty)\b/i },
-      { name: 'unit_price', pattern: /\b(?:unit\s*price|rate|unit\s*rate|price\/unit|mrp)\b/i },
-      { name: 'description', pattern: /\b(?:description|particulars|item\s*name|product|service)\b/i },
-      { name: 'item_code', pattern: /\b(?:item\s*code|hsn|sac|sku|code|sl\s*no|sr\s*no)\b/i },
-      { name: 'tax_rate', pattern: /\b(?:tax\s*rate|tax\s*%|gst\s*%|cgst\s*%|sgst\s*%|igst\s*%)\b/i },
-      { name: 'tax_amount', pattern: /\b(?:tax\s*amount|tax\s*val|cgst\s*amt|sgst\s*amt|igst\s*amt)\b/i },
-      { name: 'line_total', pattern: /\b(?:line\s*total|item\s*total|net\s*amount|taxable\s*amount|taxable\s*val)\b/i },
+      { name: 'unit_price', pattern: /\b(?:unit\s*price|unit\s*rate|price\/unit|mrp)\b/i },
+      { name: 'description', pattern: /\b(?:description|particulars|item\s*name|item\s*desc)\b/i },
+      { name: 'item_code', pattern: /\b(?:item\s*code|hsn|sac|sku|sl\s*no|sr\s*no)\b/i },
+      { name: 'tax_rate', pattern: /\b(?:tax\s*rate|gst\s*rate|cgst\s*rate|sgst\s*rate)\b/i },
+      { name: 'line_total', pattern: /\b(?:line\s*total|item\s*total)\b/i },
     ];
 
     let headerMatches = 0;
@@ -148,9 +147,12 @@ export class ExtractionQualityEvaluator {
     for (const line of lines) {
       const trimmed = line.trim();
       if (trimmed.length < 10) continue;
-      if (/^(?:subtotal|total|tax|grand|balance|due|notes|bank)/i.test(trimmed)) continue;
+      if (/^(?:subtotal|sub\s*total|total|tax|grand|balance|due|notes|bank|gstin|gst|cgst|sgst|igst|invoice|date|po|purchase\s*order|discount|less|terms)/i.test(trimmed)) continue;
 
-      const numTokens = trimmed.match(/[\d,]+(?:\.\d+)?%?/g) || [];
+      const cleanLine = trimmed
+        .replace(/\b\d{4}[-/.]\d{2}[-/.]\d{2}\b/g, '')
+        .replace(/\b(?:INV|PO)[-_][a-zA-Z0-9\-_]+\b/gi, '');
+      const numTokens = cleanLine.match(/\b\d+(?:,\d+)*(?:\.\d+)?%?\b/g) || [];
       if (numTokens.length >= 3 && /[a-zA-Z]{3,}/.test(trimmed)) {
         tabularRowsCount++;
       }
@@ -162,9 +164,9 @@ export class ExtractionQualityEvaluator {
 
     const hasTableEvidence =
       signals.includes('section_marker:line_items') ||
-      headerMatches >= 2 ||
+      (signals.includes('header:qty') && (signals.includes('header:unit_price') || signals.includes('header:description'))) ||
       tabularRowsCount >= 2 ||
-      (headerMatches >= 1 && tabularRowsCount >= 1);
+      (signals.includes('header:qty') && tabularRowsCount >= 1);
 
     const confidence = Math.min(
       1.0,
@@ -274,17 +276,31 @@ export class ExtractionQualityEvaluator {
       fieldValidationStatus.supplierGstin = { status: 'missing' };
     }
 
-    // 6. Independent Validation: PO Number (Optional field)
-    if (data.poNumber) {
+    // 6. Independent Validation: PO Number
+    const poMentionedInText = /\b(?:purchase\s*order|po\s*(?:#|no|number|ref)|p\.?o\.?)\b/i.test(rawText);
+    if (poMentionedInText && (!data.poNumber || !NormalizationHelper.isValidPONumber(data.poNumber))) {
+      failedFields.push('poNumber');
+      missingFields.push('poNumber');
+      fieldValidationStatus.poNumber = {
+        status: 'invalid',
+        detail: 'PO reference could not be reliably extracted from OCR',
+      };
+      warnings.push('PO reference was detected in document text but could not be reliably extracted.');
+      validationErrors.push('PO reference could not be reliably extracted from OCR');
+      missingCriticalFields.push('poNumber');
+    } else if (data.poNumber) {
       if (NormalizationHelper.isValidPONumber(data.poNumber)) {
         fieldValidationStatus.poNumber = { status: 'valid' };
       } else {
         failedFields.push('poNumber');
+        missingFields.push('poNumber');
         fieldValidationStatus.poNumber = {
-          status: 'suspicious',
-          detail: 'Extracted PO number appears malformed or ambiguous.',
+          status: 'invalid',
+          detail: 'PO reference could not be reliably extracted from OCR',
         };
         warnings.push(`Extracted PO number "${data.poNumber}" failed format validation.`);
+        validationErrors.push('PO reference could not be reliably extracted from OCR');
+        missingCriticalFields.push('poNumber');
       }
     } else {
       fieldValidationStatus.poNumber = { status: 'missing' };
@@ -324,12 +340,15 @@ export class ExtractionQualityEvaluator {
       }
     } else {
       if (tableEvidence.hasTableEvidence) {
+        missingCriticalFields.push('lineItems');
         missingFields.push('lineItems');
+        failedFields.push('lineItems');
         fieldValidationStatus.lineItems = {
           status: 'missing',
-          detail: 'Document contains tabular rows, but 0 line items were parsed.',
+          detail: 'Document contains an itemized table, but 0 line items were extracted.',
         };
-        warnings.push('Document contains tabular rows, but 0 line items were parsed.');
+        warnings.push('Document contains an itemized table, but 0 line items were extracted.');
+        validationErrors.push('Document contains an itemized table, but 0 line items were extracted.');
       } else {
         fieldValidationStatus.lineItems = { status: 'missing' };
       }

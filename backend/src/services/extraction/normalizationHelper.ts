@@ -18,12 +18,18 @@ export class NormalizationHelper {
     let val = raw.trim();
     if (!val) return null;
 
+    // Reject single words / generic labels like "PPE", "THE", "AND", "BOX", "TAX", "INV", "DUE", etc.
+    if (/^(?:ppe|the|and|for|not|yes|new|old|box|all|sub|tax|inv|due|pay|ref|qty|pcs|nos|val|amt|date|null|none|n\/a|undefined|unknown|invoice|bill)$/i.test(val)) {
+      return null;
+    }
+
     // Remove leading descriptive words: "PO No:", "PO Number:", "Order Ref:", "PO:", "PO -", etc.
     val = val.replace(/^(?:p\.?o\.?\s*(?:no\.?|number|ref|#)?|purchase\s*order(?:\s*no\.?|\s*number|\s*ref)?|order\s*ref(?:erence)?)[\s#.:\-_]*/i, '');
     val = val.replace(/^#\s*/, '');
 
-    // Standardize P.O. to PO
-    val = val.replace(/^p\.o\./i, 'PO');
+    // Standardize OCR confusions: P0 -> PO, P.O -> PO
+    val = val.replace(/^p0[-_\s]/i, 'PO-');
+    val = val.replace(/^p\.o\.[-_\s]*/i, 'PO-');
 
     // Replace internal consecutive spaces with single hyphen if numeric/alphanumeric pattern
     val = val.replace(/\s+/g, '-').replace(/--+/g, '-');
@@ -32,6 +38,11 @@ export class NormalizationHelper {
     val = val.replace(/^[^a-zA-Z0-9]+|[^a-zA-Z0-9]+$/g, '');
 
     if (val.length < 3) return null;
+
+    // If it is just a 3-4 letter word without numbers or hyphens and not starting with PO, reject
+    if (/^[A-Za-z]{1,4}$/.test(val) && !/^po/i.test(val)) {
+      return null;
+    }
 
     // If it was originally prefixed with PO or is a standard pattern, ensure PO-
     if (!/^po[-_]?/i.test(val) && /^po/i.test(raw.trim())) {
@@ -43,7 +54,8 @@ export class NormalizationHelper {
 
   /**
    * Pre-normalize OCR text before passing to the deterministic parser.
-   * Cleans OCR confidence artifacts, normalizes line breaks, and standardizes common field labels.
+   * Cleans OCR confidence artifacts, normalizes line breaks, splits merged adjacent fields,
+   * and standardizes common field labels.
    */
   public static normalizeOCRText(raw: string | null | undefined): string {
     if (!raw || typeof raw !== 'string') return '';
@@ -53,17 +65,28 @@ export class NormalizationHelper {
     text = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
     text = text.replace(/[\u00A0\u1680\u180e\u2000-\u200a\u202f\u205f\u3000\u200B\uFEFF]/g, ' ');
 
-    // 2. Normalize currency glyphs and OCR noise
+    // 2. Fix common OCR field label typos (e.g. "voice Date:" -> "Invoice Date:", "oice Date:" -> "Invoice Date:")
+    text = text.replace(/(?<=\s|^)(?:in)?voice\s*(?:date|no\.?|#|number)[:\s]/gi, (m) => `Invoice ${m.slice(m.toLowerCase().indexOf('voice') + 5)}`);
+    text = text.replace(/(?<=\s|^)oice\s*(?:date|no\.?|#|number)[:\s]/gi, 'Invoice Date: ');
+    text = text.replace(/(?<=\s|^)(?:due\s*date)[:\s]/gi, 'Due Date: ');
+    text = text.replace(/(?<=\s|^)(?:purchase\s*order(?:\s*no\.?|\s*number|\s*#)?|p\.?o\.?\s*(?:no\.?|number|\s*#)?)[:\s]/gi, 'PO: ');
+
+    // 3. Handle OCR cases where adjacent fields are merged onto one line (e.g. "Apex Cloud Solutions Pvt. Ltd. Invoice Date: 2026-09-01")
+    // Split line before known field labels when preceded by other text on the same line
+    const fieldLabelBreakRegex = /([^\n\r]+?)[^\S\r\n]+(?=(?:(?:tax\s*)?invoice\s*(?:date|no\.?|number|#)?|(?:in)?voice\s*(?:date|no\.?|number|#)?|due\s*date|po\s*(?:no\.?|number|#)?|purchase\s*order|gstin|gst|subtotal|grand\s*total|total\s*amount|line\s*item|billed\s*to|bill\s*to)[\s:：])/gi;
+    text = text.replace(fieldLabelBreakRegex, '$1\n');
+
+    // 4. Normalize currency glyphs and OCR noise
     text = text.replace(/[\u25A0\u25AA\uFFFD■▪●]/g, ' ');
     text = text.replace(/(?:^|\s)(?:₹|INR|Rs\.?|Rs)(?=\s*[\d,])/gi, ' ₹');
 
-    // 3. Normalize spaced GSTIN tokens (e.g. "27 AAECA 1234 F 1 Z 5" -> "27AAECA1234F1Z5")
+    // 5. Normalize spaced GSTIN tokens (e.g. "27 AAECA 1234 F 1 Z 5" -> "27AAECA1234F1Z5")
     text = text.replace(/\b(\d{2})\s+([A-Z]{5})\s+(\d{4})\s+([A-Z]{1})\s*([A-Z\d]{1})\s*([Zz]{1})\s*([A-Z\d]{1})\b/g, '$1$2$3$4$5$6$7');
 
-    // 4. Normalize common label colons safely (preserving newlines and hyphens inside identifiers)
+    // 6. Normalize common label colons safely (preserving newlines and hyphens inside identifiers)
     text = text.replace(/\b(GSTIN|GST|PO|INV|INVOICE|DATE|DUE|TOTAL|SUBTOTAL)[^\S\r\n]*[:：][^\S\r\n]*/gi, '$1: ');
 
-    // 5. Clean trailing spaces per line
+    // 7. Clean trailing spaces per line
     text = text.split('\n').map((l) => l.trimEnd()).join('\n');
 
     return text.trim();
@@ -315,6 +338,10 @@ export class NormalizationHelper {
 
   /**
    * Validate whether a string is a plausible PO Number.
+   * Strictly rejects:
+   * - Single non-PO words/abbreviations like "PPE", "THE", "AND", "BOX", "TAX", "INV", "DUE", etc.
+   * - Pure alphabetic strings under 5 letters without a PO prefix
+   * - Dates, GSTINs, Phone numbers
    */
   public static isValidPONumber(poNumber: string | null | undefined): boolean {
     if (!poNumber || typeof poNumber !== 'string') return false;
@@ -324,7 +351,20 @@ export class NormalizationHelper {
     if (this.isValidGSTIN(clean)) return false; // Reject GSTINs
     const compact = clean.replace(/[\s-]/g, '');
     if (/^(?:\+?91)?[6-9]\d{9}$/.test(compact)) return false; // Reject phone numbers
-    if (/^(?:po|purchase\s*order|order|ref|reference|null|none|n\/a|undefined|unknown|invoice|bill)$/i.test(clean)) return false;
+
+    // Reject single words / abbreviations
+    if (/^(?:ppe|the|and|for|not|yes|new|old|box|all|sub|tax|inv|due|pay|ref|qty|pcs|nos|val|amt|po|purchase\s*order|order|reference|null|none|n\/a|undefined|unknown|invoice|bill)$/i.test(clean)) {
+      return false;
+    }
+
+    // Pure alphabetic strings under 5 letters without PO prefix are invalid (e.g. PPE, ABC, TEST)
+    if (/^[A-Za-z]{1,4}$/.test(clean) && !/^po[-_]?/i.test(clean)) {
+      return false;
+    }
+
+    // Must contain at least one alphanumeric character
+    if (!/[a-zA-Z0-9]/.test(clean)) return false;
+
     return true;
   }
 
@@ -447,15 +487,30 @@ export class NormalizationHelper {
 
   /**
    * Clean and normalize company/supplier names (stripping labels like "Seller:", "Supplier:").
-   * Automatically passes through strict isValidSupplierName validation.
+   * Automatically strips trailing unrelated invoice metadata from merged OCR lines
+   * and validates through strict isValidSupplierName.
    */
   public static cleanCompanyName(raw: string | null | undefined): string | null {
     if (!raw || typeof raw !== 'string') return null;
     let name = raw.trim();
     if (!name) return null;
 
-    // Remove prefixes
+    // 1. Remove prefixes: "Supplier:", "Seller:", "Vendor:", "From:", etc.
     name = name.replace(/^(?:seller|supplier|vendor|from|company|biller|issued\s*by|sold\s*by|billed\s*by)[\s#.:\-_]*/i, '');
+
+    // 2. Strip trailing unrelated invoice metadata from merged lines
+    // e.g. "Apex Cloud Solutions Pvt. Ltd. voice Date: 2026-09-01" -> "Apex Cloud Solutions Pvt. Ltd."
+    // e.g. "Apex Cloud Solutions Pvt. Ltd. Invoice Date: 2026-09-01" -> "Apex Cloud Solutions Pvt. Ltd."
+    // e.g. "Apex Cloud Solutions Pvt. Ltd. GSTIN: 27AAECA1234F1Z5" -> "Apex Cloud Solutions Pvt. Ltd."
+    // e.g. "Apex Cloud Solutions Pvt. Ltd. PO: PO-2026-TEST-001" -> "Apex Cloud Solutions Pvt. Ltd."
+    name = name.replace(/\s+(?:(?:tax\s*)?invoice\s*(?:date|no\.?|number|#)?|(?:in)?voice\s*(?:date|no\.?|number|#)?|due\s*date|po\s*(?:no\.?|number|#)?|purchase\s*order|gstin|gst|billed\s*to|bill\s*to|ship\s*to|date)[\s:：].*$/i, '');
+
+    // 3. If corporate suffix is present, strip anything after it that looks like labels or numbers
+    const corpSuffixMatch = name.match(/^(.*?\b(?:pvt\.?\s*ltd\.?|private\s*limited|ltd\.?|limited|llc|inc\.?|llp|corp\.?|corporation)\b)(?:\s+.*)?$/i);
+    if (corpSuffixMatch) {
+      name = corpSuffixMatch[1];
+    }
+
     name = name.replace(/\s+/g, ' ').trim();
 
     if (!this.isValidSupplierName(name)) {
