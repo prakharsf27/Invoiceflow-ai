@@ -1,5 +1,6 @@
 import { aiService } from './aiService.js';
 import { PROMPTS } from './prompts.js';
+import { NormalizationHelper } from '../extraction/normalizationHelper.js';
 
 export interface ExtractedInvoiceData {
   documentType: 'invoice';
@@ -161,23 +162,40 @@ class AIExtractionService {
     const tax = extractNumber(parsed.tax);
     const amount = extractNumber(parsed.amount) ?? extractNumber(parsed.total);
 
+    const rawInvNum = extractString(parsed.invoiceNumber);
+    const invoiceNumber = rawInvNum ? NormalizationHelper.normalizeInvoiceNumber(rawInvNum) : null;
+
+    const rawSupName = extractString(parsed.supplierName);
+    const supplierName = (rawSupName && !/^(?:unknown|null|n\/a|supplier|vendor)$/i.test(rawSupName))
+      ? rawSupName.trim()
+      : null;
+
+    const rawInvDate = extractString(parsed.invoiceDate);
+    const invoiceDate = rawInvDate ? NormalizationHelper.normalizeDate(rawInvDate) : null;
+
+    const rawDueDate = extractString(parsed.dueDate);
+    const dueDate = rawDueDate ? NormalizationHelper.normalizeDate(rawDueDate) : null;
+
+    const rawPoNum = extractString(parsed.poNumber);
+    const poNumber = rawPoNum ? NormalizationHelper.normalizePONumber(rawPoNum) : null;
+
     const data: ExtractedInvoiceData = {
       documentType: 'invoice',
       confidence: typeof parsed.confidence === 'number' ? parsed.confidence : 0.85,
-      invoiceNumber: extractString(parsed.invoiceNumber),
-      supplierName: extractString(parsed.supplierName),
+      invoiceNumber,
+      supplierName,
       supplierGstin: extractString(parsed.supplierGstin) || extractString(parsed.supplierGSTIN),
       supplierEmail: extractString(parsed.supplierEmail),
       supplierPhone: extractString(parsed.supplierPhone),
-      invoiceDate: extractString(parsed.invoiceDate),
-      dueDate: extractString(parsed.dueDate),
-      poNumber: extractString(parsed.poNumber),
+      invoiceDate,
+      dueDate,
+      poNumber,
       currency: extractString(parsed.currency) || 'INR',
       subtotal,
       tax,
       discount: extractNumber(parsed.discount) || 0,
       amount,
-      paymentTerms: extractString(parsed.paymentTerms) || 'Net 15 Days',
+      paymentTerms: extractString(parsed.paymentTerms) || null,
       bankDetails: {
         accountNumber: extractString(parsed.bankDetails?.accountNumber),
         ifsc: extractString(parsed.bankDetails?.ifsc),
@@ -227,14 +245,25 @@ class AIExtractionService {
     const tax = extractNumber(parsed.tax);
     const total = extractNumber(parsed.total) ?? extractNumber(parsed.amount);
 
+    const rawPoNum = extractString(parsed.poNumber);
+    const poNumber = rawPoNum ? NormalizationHelper.normalizePONumber(rawPoNum) : null;
+
+    const rawPoDate = extractString(parsed.poDate);
+    const poDate = rawPoDate ? NormalizationHelper.normalizeDate(rawPoDate) : null;
+
+    const rawSupName = extractString(parsed.supplierName);
+    const supplierName = (rawSupName && !/^(?:unknown|null|n\/a|supplier|vendor)$/i.test(rawSupName))
+      ? rawSupName.trim()
+      : null;
+
     const data: ExtractedPOData = {
       documentType: 'purchase_order',
       confidence: typeof parsed.confidence === 'number' ? parsed.confidence : 0.85,
-      poNumber: extractString(parsed.poNumber),
-      poDate: extractString(parsed.poDate),
+      poNumber,
+      poDate,
       buyerName: extractString(parsed.buyerName) || extractString(parsed.companyName),
       buyerGstin: extractString(parsed.buyerGstin) || extractString(parsed.buyerGSTIN),
-      supplierName: extractString(parsed.supplierName),
+      supplierName,
       supplierGstin: extractString(parsed.supplierGstin) || extractString(parsed.supplierGSTIN),
       supplierEmail: extractString(parsed.supplierEmail),
       deliveryAddress: extractString(parsed.deliveryAddress) || extractString(parsed.shippingAddress),

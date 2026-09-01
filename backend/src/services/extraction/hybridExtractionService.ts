@@ -21,12 +21,17 @@ export interface HybridExtractionResult<T> {
   documentType: DocumentType;
   missingFields?: string[];
   warnings?: string[];
+  aiCallsCount?: number;
 }
 
 class HybridExtractionService {
   /**
-   * Main Hybrid Extraction Pipeline.
-   * Runs: PDF Text -> OCR -> Deterministic Parsing -> Quality Validation -> AI Fallback & Field-Level Merging.
+   * Main Deterministic-First Hybrid Extraction Pipeline.
+   * Pipeline:
+   * 1. PDF Text Extraction (for text PDFs) -> 0 AI calls
+   * 2. Local OCR Extraction (for scanned PDFs, PNG, JPG, JPEG) -> 0 AI calls
+   * 3. Deterministic Extraction -> Evaluate Quality (Critical vs Optional)
+   * 4. Selective AI Fallback ONLY if critical fields are genuinely missing / ambiguous -> Max 1 Gemini -> Immediate Groq fallback.
    */
   public async extractDocument(
     fileBuffer: Buffer,
@@ -41,25 +46,28 @@ class HybridExtractionService {
   ): Promise<HybridExtractionResult<ExtractedInvoiceData | ExtractedPOData>> {
     const { documentId, originalFileName, docTypeHint, companyId, userId } = options;
 
-    console.log(`[DOC] Processing document: ${documentId} (${originalFileName})`);
+    console.log(`[DOC] ${originalFileName}`);
+    console.log(`[DOC] MIME: ${mimeType}`);
 
     let extractedText = '';
     let sourceMethod: 'pdf_text' | 'ocr' = 'pdf_text';
     let isUsableText = false;
+    let aiCallsCount = 0;
 
     // -------------------------------------------------------------
-    // Step 1: Text Extraction (PDF Text -> OCR)
+    // Step 1: Text Extraction (PDF Text -> Local OCR)
     // -------------------------------------------------------------
-    if (mimeType === 'application/pdf' || originalFileName.toLowerCase().endsWith('.pdf')) {
+    const isPdf = mimeType === 'application/pdf' || originalFileName.toLowerCase().endsWith('.pdf');
+
+    if (isPdf) {
       const pdfRes = await documentTextExtractionService.extractText(fileBuffer);
-      console.log(`[DOC] PDF text extraction: ${pdfRes.characterCount} chars (pages: ${pdfRes.pageCount || 1})`);
-
       if (pdfRes.success && !pdfRes.isScanned) {
         extractedText = pdfRes.text;
         isUsableText = true;
         sourceMethod = 'pdf_text';
+        console.log(`[DOC] PDF text extraction: ${pdfRes.characterCount} chars (pages: ${pdfRes.pageCount || 1})`);
       } else {
-        console.log(`[DOC] Minimal or unreadable text detected. Document flagged as scanned/image.`);
+        console.log(`[DOC] Minimal/unreadable PDF text detected (${pdfRes.characterCount} chars). Routing to local OCR.`);
       }
     }
 
@@ -69,7 +77,7 @@ class HybridExtractionService {
         extractedText = ocrRes.text;
         isUsableText = true;
         sourceMethod = 'ocr';
-        console.log(`[DOC] OCR text extraction: ${extractedText.length} chars (engine: ${ocrRes.engine})`);
+        console.log(`[DOC] Local OCR extraction: ${extractedText.length} chars (engine: ${ocrRes.engine})`);
       }
     }
 
@@ -85,7 +93,6 @@ class HybridExtractionService {
       console.log(`[DOC] Detected document type: ${detectedType}`);
     }
 
-    // Default to 'invoice' if still unknown
     if (detectedType === 'unknown') {
       detectedType = 'invoice';
     }
@@ -98,9 +105,10 @@ class HybridExtractionService {
         const detResult = deterministicParserService.parsePOText(extractedText, sourceMethod);
 
         if (detResult.quality === 'high' && !detResult.needsAI) {
-          console.log(`[DOC] Extraction strategy: LOCAL (Quality: HIGH, 0 AI calls required)`);
-          console.log(`[DOC] Local extraction confidence: ${detResult.confidence}`);
-          console.log(`[DOC] Local PO extracted: PO# "${detResult.data.poNumber}", Supplier: "${detResult.data.supplierName}", Total: ${detResult.data.total}`);
+          console.log(`[DOC] Local extraction: HIGH`);
+          console.log(`[DOC] AI required: NO`);
+          console.log(`[DOC] AI calls: 0`);
+          console.log(`[DOC] Local PO extracted: PO# "${detResult.data.poNumber}", Supplier: "${detResult.data.supplierName}", Total: ₹${detResult.data.total}`);
 
           return {
             data: detResult.data,
@@ -112,18 +120,20 @@ class HybridExtractionService {
             model: 'deterministic_parser',
             missingFields: [],
             warnings: detResult.warnings,
+            aiCallsCount: 0,
           };
         } else {
-          console.log(`[DOC] Local PO extraction evaluated as ${detResult.quality.toUpperCase()} (missing/ambiguous: ${detResult.missingOrAmbiguousFields.join(', ')}). Warnings: ${detResult.warnings.join('; ')}`);
-          console.log(`[DOC] Triggering selective AI fallback for quality completion...`);
+          console.log(`[DOC] Local PO extraction: ${detResult.quality.toUpperCase()} (missing critical: ${detResult.missingOrAmbiguousFields.join(', ')})`);
+          console.log(`[DOC] AI required: YES`);
         }
       } else {
         const detResult = deterministicParserService.parseInvoiceText(extractedText, sourceMethod);
 
         if (detResult.quality === 'high' && !detResult.needsAI) {
-          console.log(`[DOC] Extraction strategy: LOCAL (Quality: HIGH, 0 AI calls required)`);
-          console.log(`[DOC] Local extraction confidence: ${detResult.confidence}`);
-          console.log(`[DOC] Local Invoice extracted: Inv# "${detResult.data.invoiceNumber}", Supplier: "${detResult.data.supplierName}", Amount: ${detResult.data.amount}`);
+          console.log(`[DOC] Local extraction: HIGH`);
+          console.log(`[DOC] AI required: NO`);
+          console.log(`[DOC] AI calls: 0`);
+          console.log(`[DOC] Local Invoice extracted: Inv# "${detResult.data.invoiceNumber}", Supplier: "${detResult.data.supplierName}", Amount: ₹${detResult.data.amount}`);
 
           return {
             data: detResult.data,
@@ -135,19 +145,22 @@ class HybridExtractionService {
             model: 'deterministic_parser',
             missingFields: [],
             warnings: detResult.warnings,
+            aiCallsCount: 0,
           };
         } else {
-          console.log(`[DOC] Local Invoice extraction evaluated as ${detResult.quality.toUpperCase()} (missing/ambiguous: ${detResult.missingOrAmbiguousFields.join(', ')}). Warnings: ${detResult.warnings.join('; ')}`);
-          console.log(`[DOC] Triggering selective AI fallback for quality completion...`);
+          console.log(`[DOC] Local Invoice extraction: ${detResult.quality.toUpperCase()} (missing critical: ${detResult.missingOrAmbiguousFields.join(', ')})`);
+          console.log(`[DOC] AI required: YES`);
         }
       }
+    } else {
+      console.log(`[DOC] Local extraction: UNREADABLE / NO LOCAL TEXT`);
+      console.log(`[DOC] AI required: YES`);
     }
 
     // -------------------------------------------------------------
-    // Step 4: AI Fallback & Intelligent Field-Level Merging
-    // (Triggered ONLY when text was unusable or essential fields/line items are missing)
+    // Step 4: Selective AI Fallback (1 Gemini attempt -> Immediate Groq fallback)
     // -------------------------------------------------------------
-    console.log(`[DOC] Extraction strategy: AI (Serialized AI Queue)`);
+    aiCallsCount = 1;
 
     if (detectedType === 'purchase_order') {
       const aiRes = await aiExtractionService.extractPODocument(fileBuffer, mimeType, {
@@ -155,7 +168,7 @@ class HybridExtractionService {
         userId,
       });
 
-      // Merge with any valid deterministic fields if available
+      // Merge with any valid deterministic fields if available (local has priority)
       let mergedData = aiRes.data;
       if (isUsableText) {
         const detResult = deterministicParserService.parsePOText(extractedText, sourceMethod);
@@ -164,7 +177,9 @@ class HybridExtractionService {
 
       const qualityCheck = ExtractionQualityEvaluator.evaluatePOQuality(extractedText, mergedData);
 
-      console.log(`[DOC] Extraction complete via AI (model: ${aiRes.model}, quality: ${qualityCheck.quality})`);
+      console.log(`[DOC] Final extraction quality: ${qualityCheck.quality.toUpperCase()} (AI model: ${aiRes.model})`);
+      console.log(`[DOC] AI calls: 1`);
+
       return {
         data: mergedData,
         rawJson: aiRes.rawJson,
@@ -176,6 +191,7 @@ class HybridExtractionService {
         documentType: 'purchase_order',
         missingFields: qualityCheck.missingFields,
         warnings: qualityCheck.warnings,
+        aiCallsCount: 1,
       };
     } else {
       const aiRes = await aiExtractionService.extractInvoiceDocument(fileBuffer, mimeType, {
@@ -183,7 +199,7 @@ class HybridExtractionService {
         userId,
       });
 
-      // Merge with any valid deterministic fields if available
+      // Merge with any valid deterministic fields if available (local has priority)
       let mergedData = aiRes.data;
       if (isUsableText) {
         const detResult = deterministicParserService.parseInvoiceText(extractedText, sourceMethod);
@@ -192,7 +208,9 @@ class HybridExtractionService {
 
       const qualityCheck = ExtractionQualityEvaluator.evaluateInvoiceQuality(extractedText, mergedData);
 
-      console.log(`[DOC] Extraction complete via AI (model: ${aiRes.model}, quality: ${qualityCheck.quality})`);
+      console.log(`[DOC] Final extraction quality: ${qualityCheck.quality.toUpperCase()} (AI model: ${aiRes.model})`);
+      console.log(`[DOC] AI calls: 1`);
+
       return {
         data: mergedData,
         rawJson: aiRes.rawJson,
@@ -204,38 +222,48 @@ class HybridExtractionService {
         documentType: 'invoice',
         missingFields: qualityCheck.missingFields,
         warnings: qualityCheck.warnings,
+        aiCallsCount: 1,
       };
     }
   }
 
   /**
    * Smartly merge deterministic invoice data with AI fallback data.
-   * Priority:
-   * 1. Reliable deterministic values (e.g. invoiceNumber, dates, amounts when valid).
-   * 2. AI values when deterministic values are missing, null, or incomplete (e.g. lineItems).
-   * 3. Re-calculated derived fields.
+   * LOCAL TRUSTWORTHY DATA ALWAYS HAS PRIORITY OVER AI.
+   * AI acts as a completion layer for missing/ambiguous fields only.
    */
   private mergeInvoiceData(
     det: ExtractedInvoiceData,
     ai: ExtractedInvoiceData
   ): ExtractedInvoiceData {
-    const invDate = det.invoiceDate || ai.invoiceDate;
+    const invDate = (det.invoiceDate && /^\d{4}-\d{2}-\d{2}$/.test(det.invoiceDate)) ? det.invoiceDate : ai.invoiceDate;
     const terms = det.paymentTerms || ai.paymentTerms;
     let dueDate = det.dueDate || ai.dueDate;
     if (!dueDate && invDate && terms) {
       dueDate = NormalizationHelper.calculateDueDateFromTerms(invDate, terms);
     }
 
-    // Determine line items: prefer deterministic if populated and non-empty, otherwise use AI-extracted items
-    let lineItems = (det.lineItems && det.lineItems.length > 0)
+    const lineItems = (det.lineItems && det.lineItems.length > 0)
       ? det.lineItems
       : (ai.lineItems || []);
+
+    const invoiceNumber = (det.invoiceNumber && det.invoiceNumber.trim().length >= 2 && !/^(?:unknown|null|n\/a)$/i.test(det.invoiceNumber))
+      ? det.invoiceNumber
+      : ai.invoiceNumber;
+
+    const supplierName = (det.supplierName && det.supplierName.trim().length >= 3 && !/^(?:unknown|null|n\/a|supplier|vendor)$/i.test(det.supplierName))
+      ? det.supplierName
+      : ai.supplierName;
+
+    const amount = (typeof det.amount === 'number' && det.amount > 0)
+      ? det.amount
+      : ai.amount;
 
     return {
       documentType: 'invoice',
       confidence: Math.max(det.confidence, ai.confidence || 0.88),
-      invoiceNumber: det.invoiceNumber || ai.invoiceNumber,
-      supplierName: det.supplierName || ai.supplierName,
+      invoiceNumber,
+      supplierName,
       supplierGstin: det.supplierGstin || ai.supplierGstin,
       supplierEmail: det.supplierEmail || ai.supplierEmail,
       supplierPhone: det.supplierPhone || ai.supplierPhone,
@@ -243,10 +271,10 @@ class HybridExtractionService {
       dueDate,
       poNumber: det.poNumber || ai.poNumber,
       currency: det.currency || ai.currency || 'INR',
-      subtotal: (det.subtotal && det.subtotal > 0) ? det.subtotal : ai.subtotal,
-      tax: (det.tax && det.tax > 0) ? det.tax : ai.tax,
+      subtotal: (typeof det.subtotal === 'number' && det.subtotal > 0) ? det.subtotal : ai.subtotal,
+      tax: (typeof det.tax === 'number' && det.tax > 0) ? det.tax : ai.tax,
       discount: det.discount || ai.discount || 0,
-      amount: (det.amount && det.amount > 0) ? det.amount : ai.amount,
+      amount,
       paymentTerms: terms,
       bankDetails: {
         accountNumber: det.bankDetails?.accountNumber || ai.bankDetails?.accountNumber || null,
@@ -259,32 +287,47 @@ class HybridExtractionService {
 
   /**
    * Smartly merge deterministic PO data with AI fallback data.
+   * LOCAL TRUSTWORTHY DATA ALWAYS HAS PRIORITY OVER AI.
    */
   private mergePOData(
     det: ExtractedPOData,
     ai: ExtractedPOData
   ): ExtractedPOData {
-    let lineItems = (det.lineItems && det.lineItems.length > 0)
+    const lineItems = (det.lineItems && det.lineItems.length > 0)
       ? det.lineItems
       : (ai.lineItems || []);
+
+    const poNumber = (det.poNumber && det.poNumber.trim().length >= 2 && !/^(?:unknown|null|n\/a)$/i.test(det.poNumber))
+      ? det.poNumber
+      : ai.poNumber;
+
+    const supplierName = (det.supplierName && det.supplierName.trim().length >= 3 && !/^(?:unknown|null|n\/a|supplier|vendor)$/i.test(det.supplierName))
+      ? det.supplierName
+      : ai.supplierName;
+
+    const poDate = (det.poDate && /^\d{4}-\d{2}-\d{2}$/.test(det.poDate)) ? det.poDate : ai.poDate;
+
+    const total = (typeof det.total === 'number' && det.total > 0)
+      ? det.total
+      : ai.total;
 
     return {
       documentType: 'purchase_order',
       confidence: Math.max(det.confidence, ai.confidence || 0.88),
-      poNumber: det.poNumber || ai.poNumber,
-      poDate: det.poDate || ai.poDate,
+      poNumber,
+      poDate,
       buyerName: det.buyerName || ai.buyerName,
       buyerGstin: det.buyerGstin || ai.buyerGstin,
-      supplierName: det.supplierName || ai.supplierName,
+      supplierName,
       supplierGstin: det.supplierGstin || ai.supplierGstin,
       supplierEmail: det.supplierEmail || ai.supplierEmail,
       deliveryAddress: det.deliveryAddress || ai.deliveryAddress,
       paymentTerms: det.paymentTerms || ai.paymentTerms,
       expectedDeliveryDate: det.expectedDeliveryDate || ai.expectedDeliveryDate,
       currency: det.currency || ai.currency || 'INR',
-      subtotal: (det.subtotal && det.subtotal > 0) ? det.subtotal : ai.subtotal,
-      tax: (det.tax && det.tax > 0) ? det.tax : ai.tax,
-      total: (det.total && det.total > 0) ? det.total : ai.total,
+      subtotal: (typeof det.subtotal === 'number' && det.subtotal > 0) ? det.subtotal : ai.subtotal,
+      tax: (typeof det.tax === 'number' && det.tax > 0) ? det.tax : ai.tax,
+      total,
       lineItems,
     };
   }

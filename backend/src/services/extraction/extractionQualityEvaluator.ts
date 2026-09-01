@@ -13,6 +13,7 @@ export interface ExtractionQualityResult {
   confidence: number;
   needsAiFallback: boolean;
   missingFields: string[];
+  missingCriticalFields: string[];
   warnings: string[];
   tableEvidenceFound: boolean;
   financialReconciliation: FinancialReconciliation;
@@ -56,24 +57,26 @@ export class ExtractionQualityEvaluator {
 
     const docType = doc.documentType || data.documentType || 'unknown';
 
-    // 3. Evaluate by Document Type
+    // 3. Evaluate Critical Fields by Document Type
     if (docType === 'invoice') {
       const invNum = data.invoiceNumber;
       const supplier = data.supplierName;
+      const invDate = data.invoiceDate;
       const amount = typeof data.amount === 'number'
         ? data.amount
         : (typeof data.total === 'number' ? data.total : null);
 
-      // Critical fields for invoice: invoiceNumber, supplierName, amount > 0
+      // Critical fields for invoice: invoiceNumber, supplierName, invoiceDate, amount > 0
       if (isInvalidString(invNum, 2)) return false;
       if (isInvalidString(supplier, 3)) return false;
+      if (isInvalidString(invDate, 6)) return false;
       if (amount === null || isNaN(amount) || amount <= 0) return false;
 
       // Check quality metadata if present
       if (doc.extractionQuality === 'incomplete' || doc.extractionQuality === 'ambiguous') {
         return false;
       }
-      if (typeof doc.confidence === 'number' && doc.confidence < 0.80) {
+      if (typeof doc.confidence === 'number' && doc.confidence < 0.75) {
         return false;
       }
 
@@ -81,19 +84,21 @@ export class ExtractionQualityEvaluator {
     } else if (docType === 'purchase_order') {
       const poNum = data.poNumber;
       const supplier = data.supplierName;
+      const poDate = data.poDate;
       const total = typeof data.total === 'number'
         ? data.total
         : (typeof data.amount === 'number' ? data.amount : null);
 
-      // Critical fields for PO: poNumber, supplierName, total > 0
+      // Critical fields for PO: poNumber, supplierName, poDate, total > 0
       if (isInvalidString(poNum, 2)) return false;
       if (isInvalidString(supplier, 3)) return false;
+      if (isInvalidString(poDate, 6)) return false;
       if (total === null || isNaN(total) || total <= 0) return false;
 
       if (doc.extractionQuality === 'incomplete' || doc.extractionQuality === 'ambiguous') {
         return false;
       }
-      if (typeof doc.confidence === 'number' && doc.confidence < 0.80) {
+      if (typeof doc.confidence === 'number' && doc.confidence < 0.75) {
         return false;
       }
 
@@ -105,7 +110,6 @@ export class ExtractionQualityEvaluator {
 
   /**
    * Detects whether the source document text contains visible evidence of an itemized table.
-   * Looks for column headers, tabular structure markers, and repeating line patterns.
    */
   public static detectItemTableEvidence(text: string): {
     hasTableEvidence: boolean;
@@ -143,16 +147,14 @@ export class ExtractionQualityEvaluator {
       }
     }
 
-    // 3. Tabular row detection (e.g. "1. Widget Name 5 1000 18% 5900" or lines ending in 3+ numbers)
+    // 3. Tabular row detection
     const lines = text.split('\n');
     let tabularRowsCount = 0;
     for (const line of lines) {
       const trimmed = line.trim();
       if (trimmed.length < 10) continue;
-      // Skip summary totals
       if (/^(?:subtotal|total|tax|grand|balance|due|notes|bank)/i.test(trimmed)) continue;
 
-      // Check if line contains a description followed by 2 or more numeric tokens
       const numTokens = trimmed.match(/[\d,]+(?:\.\d+)?%?/g) || [];
       if (numTokens.length >= 3 && /[a-zA-Z]{3,}/.test(trimmed)) {
         tabularRowsCount++;
@@ -163,17 +165,16 @@ export class ExtractionQualityEvaluator {
       signals.push(`tabular_rows_detected:${tabularRowsCount}`);
     }
 
-    // A table is considered present if:
-    // - Section marker + at least 1 header/row
-    // - OR 2 or more column headers
-    // - OR at least 2 tabular data rows
     const hasTableEvidence =
       signals.includes('section_marker:line_items') ||
       headerMatches >= 2 ||
       tabularRowsCount >= 2 ||
       (headerMatches >= 1 && tabularRowsCount >= 1);
 
-    const confidence = Math.min(1.0, (headerMatches * 0.25) + (tabularRowsCount * 0.25) + (signals.includes('section_marker:line_items') ? 0.3 : 0));
+    const confidence = Math.min(
+      1.0,
+      headerMatches * 0.25 + tabularRowsCount * 0.25 + (signals.includes('section_marker:line_items') ? 0.3 : 0)
+    );
 
     return {
       hasTableEvidence,
@@ -184,40 +185,50 @@ export class ExtractionQualityEvaluator {
 
   /**
    * Evaluates the extraction quality of an extracted Invoice.
+   * STRICT SEPARATION OF CRITICAL VS OPTIONAL FIELDS:
+   * CRITICAL: invoiceNumber, supplierName, invoiceDate, amount (> 0).
+   * OPTIONAL: GSTIN, dueDate, poNumber, bankDetails, lineItems, tax breakdown.
+   * If all critical fields are present and valid -> HIGH QUALITY, NO AI REQUIRED.
    */
   public static evaluateInvoiceQuality(
     rawText: string,
     data: ExtractedInvoiceData
   ): ExtractionQualityResult {
+    const missingCriticalFields: string[] = [];
     const missingFields: string[] = [];
     const warnings: string[] = [];
 
-    // 1. Critical Header Fields Evaluation
-    if (!data.invoiceNumber || data.invoiceNumber.trim().length < 2) {
+    // 1. CRITICAL Header Fields Evaluation
+    if (!data.invoiceNumber || data.invoiceNumber.trim().length < 2 || /^(?:unknown|null|n\/a|invoice|bill)$/i.test(data.invoiceNumber.trim())) {
+      missingCriticalFields.push('invoiceNumber');
       missingFields.push('invoiceNumber');
     }
-    if (!data.supplierName || data.supplierName.trim().length < 3) {
+    if (!data.supplierName || data.supplierName.trim().length < 3 || /^(?:unknown|null|n\/a|supplier|vendor|seller)$/i.test(data.supplierName.trim())) {
+      missingCriticalFields.push('supplierName');
       missingFields.push('supplierName');
     }
-    if (!data.invoiceDate) {
+    if (!data.invoiceDate || !/^\d{4}-\d{2}-\d{2}$/.test(data.invoiceDate)) {
+      missingCriticalFields.push('invoiceDate');
       missingFields.push('invoiceDate');
     }
-    if (data.amount === null || data.amount === undefined || data.amount <= 0) {
+    if (data.amount === null || data.amount === undefined || typeof data.amount !== 'number' || isNaN(data.amount) || data.amount <= 0) {
+      missingCriticalFields.push('amount');
       missingFields.push('amount');
     }
 
-    // 2. Table Evidence vs Extracted Line Items
+    // 2. OPTIONAL Fields Tracking (Does NOT trigger AI fallback if missing)
+    if (!data.supplierGstin) missingFields.push('supplierGstin');
+    if (!data.dueDate) missingFields.push('dueDate');
+    if (!data.bankDetails?.accountNumber) missingFields.push('bankDetails');
+
     const tableEvidence = this.detectItemTableEvidence(rawText);
     const lineItemsCount = data.lineItems ? data.lineItems.length : 0;
-
-    let lineItemQualityOk = true;
     if (tableEvidence.hasTableEvidence && lineItemsCount === 0) {
       missingFields.push('lineItems');
-      warnings.push(`Document contains clear evidence of an item table (signals: ${tableEvidence.signals.join(', ')}), but 0 line items were parsed.`);
-      lineItemQualityOk = false;
+      warnings.push(`Document contains tabular rows, but 0 line items were parsed.`);
     }
 
-    // 3. Financial Reconciliation
+    // 3. Financial Reconciliation Check
     const subtotal = data.subtotal ?? null;
     const tax = data.tax ?? null;
     const discount = data.discount ?? 0;
@@ -230,85 +241,47 @@ export class ExtractionQualityEvaluator {
     if (subtotal !== null && tax !== null && total > 0) {
       const expectedTotal = Math.round((subtotal + tax - discount) * 100) / 100;
       discrepancyVariance = Math.abs(expectedTotal - total);
-      if (discrepancyVariance > 2.0) {
+      if (discrepancyVariance > 5.0) {
         subtotalPlusTaxEqualsTotal = false;
-        discrepancyDetails.push(`Financial mismatch: Subtotal (${subtotal}) + Tax (${tax}) - Discount (${discount}) = ${expectedTotal}, but Total is ${total} (variance: ${discrepancyVariance}).`);
+        discrepancyDetails.push(
+          `Financial mismatch: Subtotal (${subtotal}) + Tax (${tax}) - Discount (${discount}) = ${expectedTotal}, but Total is ${total} (variance: ${discrepancyVariance}).`
+        );
         warnings.push(`Financial calculation discrepancy: variance of ₹${discrepancyVariance}`);
       }
     }
 
-    // Line items sum check
-    let lineItemsSumMatchesSubtotal: boolean | null = null;
-    if (lineItemsCount > 0 && subtotal !== null && subtotal > 0) {
-      const itemsSum = data.lineItems.reduce((acc, item) => {
-        const itemVal = item.quantity && item.unitPrice ? (item.quantity * item.unitPrice) : (item.total || 0);
-        return acc + itemVal;
-      }, 0);
-
-      const itemsTotalSum = data.lineItems.reduce((acc, item) => acc + (item.total || 0), 0);
-      const subtotalDiff = Math.abs(itemsSum - subtotal);
-      const totalDiff = Math.abs(itemsTotalSum - total);
-
-      if (subtotalDiff <= 5.0 || totalDiff <= 5.0) {
-        lineItemsSumMatchesSubtotal = true;
-      } else if (lineItemsCount > 1 && subtotalDiff > (subtotal * 0.15)) {
-        // Significant partial line-item extraction
-        lineItemsSumMatchesSubtotal = false;
-        discrepancyDetails.push(`Line items sum (₹${itemsSum}) does not match invoice subtotal (₹${subtotal}).`);
-        warnings.push(`Extracted line items sum (₹${itemsSum}) deviates from invoice subtotal (₹${subtotal}).`);
-      }
-    }
-
-    const isReconciled = subtotalPlusTaxEqualsTotal && (lineItemsSumMatchesSubtotal !== false);
-
-    // 4. Calculate Holistic Quality Score
-    let score = 0.20;
-    if (!missingFields.includes('invoiceNumber')) score += 0.20;
-    if (!missingFields.includes('supplierName')) score += 0.15;
-    if (!missingFields.includes('invoiceDate')) score += 0.15;
-    if (!missingFields.includes('amount')) score += 0.15;
-    if (data.supplierGstin) score += 0.05;
-    if (subtotalPlusTaxEqualsTotal && subtotal !== null && tax !== null) score += 0.05;
-
-    if (lineItemQualityOk) {
-      score += 0.05;
-    } else {
-      // Deduct heavily for missing table items when table evidence exists
-      score -= 0.35;
-    }
-
-    let confidence = Math.min(0.98, Math.max(0.10, Math.round(score * 100) / 100));
-
-    // 5. Determine Final Quality Classification & AI Fallback Requirement
+    // 4. Determine Quality & AI Fallback Requirement
+    // AI is triggered ONLY when CRITICAL fields are missing
     let quality: 'high' | 'incomplete' | 'ambiguous' = 'high';
     let needsAiFallback = false;
 
-    if (missingFields.length > 0) {
+    if (missingCriticalFields.length > 0) {
       quality = 'incomplete';
       needsAiFallback = true;
-    } else if (!isReconciled || (lineItemsSumMatchesSubtotal === false)) {
+    } else if (!subtotalPlusTaxEqualsTotal && discrepancyVariance > 50) {
       quality = 'ambiguous';
       needsAiFallback = true;
-    } else if (confidence < 0.85) {
-      quality = 'incomplete';
-      needsAiFallback = true;
+    } else {
+      quality = 'high';
+      needsAiFallback = false;
     }
 
-    if (needsAiFallback) {
-      confidence = Math.min(confidence, 0.70);
-    }
+    let confidence = needsAiFallback ? 0.60 : 0.95;
+    if (lineItemsCount > 0) confidence = Math.min(0.99, confidence + 0.03);
+    if (data.supplierGstin) confidence = Math.min(0.99, confidence + 0.02);
 
     return {
       quality,
       confidence,
       needsAiFallback,
       missingFields,
+      missingCriticalFields,
       warnings,
       tableEvidenceFound: tableEvidence.hasTableEvidence,
       financialReconciliation: {
-        isReconciled,
+        isReconciled: subtotalPlusTaxEqualsTotal,
         subtotalPlusTaxEqualsTotal,
-        lineItemsSumMatchesSubtotal,
+        lineItemsSumMatchesSubtotal: null,
         variance: discrepancyVariance,
         discrepancyDetails,
       },
@@ -317,37 +290,48 @@ export class ExtractionQualityEvaluator {
 
   /**
    * Evaluates the extraction quality of an extracted Purchase Order.
+   * STRICT SEPARATION OF CRITICAL VS OPTIONAL FIELDS:
+   * CRITICAL: poNumber, supplierName, poDate, total (> 0).
+   * OPTIONAL: buyerGstin, supplierGstin, lineItems, tax breakdown, deliveryAddress.
    */
   public static evaluatePOQuality(
     rawText: string,
     data: ExtractedPOData
   ): ExtractionQualityResult {
+    const missingCriticalFields: string[] = [];
     const missingFields: string[] = [];
     const warnings: string[] = [];
 
-    if (!data.poNumber || data.poNumber.trim().length < 2) {
+    // 1. CRITICAL Header Fields Evaluation
+    if (!data.poNumber || data.poNumber.trim().length < 2 || /^(?:unknown|null|n\/a|po|purchase\s*order)$/i.test(data.poNumber.trim())) {
+      missingCriticalFields.push('poNumber');
       missingFields.push('poNumber');
     }
-    if (!data.supplierName || data.supplierName.trim().length < 3) {
+    if (!data.supplierName || data.supplierName.trim().length < 3 || /^(?:unknown|null|n\/a|supplier|vendor|seller)$/i.test(data.supplierName.trim())) {
+      missingCriticalFields.push('supplierName');
       missingFields.push('supplierName');
     }
-    if (!data.poDate) {
+    if (!data.poDate || !/^\d{4}-\d{2}-\d{2}$/.test(data.poDate)) {
+      missingCriticalFields.push('poDate');
       missingFields.push('poDate');
     }
-    if (data.total === null || data.total === undefined || data.total <= 0) {
+    if (data.total === null || data.total === undefined || typeof data.total !== 'number' || isNaN(data.total) || data.total <= 0) {
+      missingCriticalFields.push('total');
       missingFields.push('total');
     }
 
+    // 2. OPTIONAL Fields Tracking
+    if (!data.buyerName) missingFields.push('buyerName');
+    if (!data.supplierGstin) missingFields.push('supplierGstin');
+
     const tableEvidence = this.detectItemTableEvidence(rawText);
     const lineItemsCount = data.lineItems ? data.lineItems.length : 0;
-
-    let lineItemQualityOk = true;
     if (tableEvidence.hasTableEvidence && lineItemsCount === 0) {
       missingFields.push('lineItems');
-      warnings.push(`PO contains evidence of an item table, but 0 line items were parsed.`);
-      lineItemQualityOk = false;
+      warnings.push(`PO contains tabular items, but 0 line items were parsed.`);
     }
 
+    // 3. Financial Reconciliation
     const subtotal = data.subtotal ?? null;
     const tax = data.tax ?? null;
     const total = data.total ?? 0;
@@ -359,51 +343,39 @@ export class ExtractionQualityEvaluator {
     if (subtotal !== null && tax !== null && total > 0) {
       const expectedTotal = Math.round((subtotal + tax) * 100) / 100;
       discrepancyVariance = Math.abs(expectedTotal - total);
-      if (discrepancyVariance > 2.0) {
+      if (discrepancyVariance > 5.0) {
         subtotalPlusTaxEqualsTotal = false;
-        discrepancyDetails.push(`PO Total mismatch: Subtotal (${subtotal}) + Tax (${tax}) = ${expectedTotal}, but Total is ${total}.`);
+        discrepancyDetails.push(
+          `PO Total mismatch: Subtotal (${subtotal}) + Tax (${tax}) = ${expectedTotal}, but Total is ${total}.`
+        );
         warnings.push(`PO total financial discrepancy of ₹${discrepancyVariance}`);
       }
     }
 
-    let score = 0.20;
-    if (!missingFields.includes('poNumber')) score += 0.25;
-    if (!missingFields.includes('supplierName')) score += 0.15;
-    if (!missingFields.includes('poDate')) score += 0.15;
-    if (!missingFields.includes('total')) score += 0.15;
-    if (data.buyerName) score += 0.05;
-
-    if (lineItemQualityOk) {
-      score += 0.05;
-    } else {
-      score -= 0.35;
-    }
-
-    let confidence = Math.min(0.98, Math.max(0.10, Math.round(score * 100) / 100));
-
+    // 4. Quality & AI Fallback Requirement
     let quality: 'high' | 'incomplete' | 'ambiguous' = 'high';
     let needsAiFallback = false;
 
-    if (missingFields.length > 0) {
+    if (missingCriticalFields.length > 0) {
       quality = 'incomplete';
       needsAiFallback = true;
-    } else if (!subtotalPlusTaxEqualsTotal) {
+    } else if (!subtotalPlusTaxEqualsTotal && discrepancyVariance > 50) {
       quality = 'ambiguous';
       needsAiFallback = true;
-    } else if (confidence < 0.85) {
-      quality = 'incomplete';
-      needsAiFallback = true;
+    } else {
+      quality = 'high';
+      needsAiFallback = false;
     }
 
-    if (needsAiFallback) {
-      confidence = Math.min(confidence, 0.70);
-    }
+    let confidence = needsAiFallback ? 0.60 : 0.95;
+    if (lineItemsCount > 0) confidence = Math.min(0.99, confidence + 0.03);
 
     return {
       quality,
       confidence,
       needsAiFallback,
       missingFields,
+      missingCriticalFields,
       warnings,
       tableEvidenceFound: tableEvidence.hasTableEvidence,
       financialReconciliation: {

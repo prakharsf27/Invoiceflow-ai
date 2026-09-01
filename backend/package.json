@@ -27,7 +27,8 @@
     "mongoose": "^9.9.3",
     "morgan": "^1.11.0",
     "multer": "^2.2.0",
-    "pdf-parse": "^2.4.5"
+    "pdf-parse": "^2.4.5",
+    "tesseract.js": "^7.0.0"
   },
   "devDependencies": {
     "@types/bcryptjs": "^2.4.6",

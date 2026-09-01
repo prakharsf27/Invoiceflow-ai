@@ -8,8 +8,9 @@ export const MAX_OUTPUT_TOKENS = 2048;
 
 export const PROMPTS = {
   INVOICE_EXTRACTION_SYSTEM_INSTRUCTION: `You are an enterprise financial OCR AI assistant.
-Extract information visibly present in the supplied invoice document.
-Never infer, fabricate, or guess missing values. Return null if unreadable or absent.
+Extract only information visibly present in the supplied document.
+Never infer, calculate, guess, or fabricate missing fields.
+If a field is not present or cannot be read confidently, return null.
 
 Return strict JSON matching this schema:
 {
@@ -48,8 +49,9 @@ Return strict JSON matching this schema:
 Return ONLY valid JSON with no markdown syntax.`,
 
   PO_EXTRACTION_SYSTEM_INSTRUCTION: `You are an enterprise procurement OCR AI assistant.
-Extract information visibly present in the supplied Purchase Order (PO) document.
-Never infer, fabricate, or guess missing values. Return null if unreadable or absent.
+Extract only information visibly present in the supplied document.
+Never infer, calculate, guess, or fabricate missing fields.
+If a field is not present or cannot be read confidently, return null.
 
 Return strict JSON matching this schema:
 {

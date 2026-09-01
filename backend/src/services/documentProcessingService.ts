@@ -15,6 +15,8 @@ const escapeRegExp = (str: string): string => {
 };
 
 class DocumentProcessingService {
+  private processingLocks: Set<string> = new Set();
+
   /**
    * Calculate SHA-256 hash of file buffer for content deduplication & idempotency.
    */
@@ -28,6 +30,35 @@ class DocumentProcessingService {
    * Financial Math Validation -> PO Matching -> DB Sync.
    */
   public async processDocument(
+    documentId: string,
+    companyId: string,
+    userId: string,
+    optionsOrForce: { forceReprocess?: boolean } | boolean = false
+  ): Promise<IDocumentEntity> {
+    const lockKey = `${companyId}:${documentId}`;
+    if (this.processingLocks.has(lockKey)) {
+      console.log(`[DocumentProcessingService] Concurrent processing lock active for ${lockKey}. Awaiting resolution...`);
+      let waits = 0;
+      while (this.processingLocks.has(lockKey) && waits < 6) {
+        await new Promise((r) => setTimeout(r, 500));
+        waits++;
+      }
+      const existing = await DocumentModel.findOne({ id: documentId, companyId });
+      if (existing && existing.extractionStatus === 'extracted') {
+        return existing;
+      }
+    }
+
+    this.processingLocks.add(lockKey);
+
+    try {
+      return await this.executeProcessDocument(documentId, companyId, userId, optionsOrForce);
+    } finally {
+      this.processingLocks.delete(lockKey);
+    }
+  }
+
+  private async executeProcessDocument(
     documentId: string,
     companyId: string,
     userId: string,
@@ -444,6 +475,13 @@ class DocumentProcessingService {
         }
       }
 
+      // Evaluate whether critical fields are present
+      const isCriticalMissing = (docType === 'purchase_order')
+        ? (!extractedPayload.poNumber || !extractedPayload.total || extractedPayload.total <= 0)
+        : (!extractedPayload.invoiceNumber || !extractedPayload.amount || extractedPayload.amount <= 0);
+
+      const isFailedExtraction = extractionResult.quality === 'incomplete' && isCriticalMissing;
+
       // Update Document record status atomically
       const finalDoc = await DocumentModel.findOneAndUpdate(
         { id: documentId, companyId },
@@ -458,8 +496,9 @@ class DocumentProcessingService {
             matchResult,
             supplierResult,
             linkedRecordId,
-            processingStatus: 'processed',
-            extractionStatus: 'extracted',
+            processingStatus: isFailedExtraction ? 'failed' : 'processed',
+            extractionStatus: isFailedExtraction ? 'failed' : 'extracted',
+            extractionError: isFailedExtraction ? 'Critical fields missing from document extraction.' : null,
             extractedAt: new Date().toISOString(),
           },
         },

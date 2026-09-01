@@ -72,8 +72,8 @@ export class DeterministicParserService {
     // 1. Invoice Number Extraction (Strictly labeled)
     let invoiceNumber: string | null = null;
     const invNumPatterns = [
-      /\b(?:tax\s*)?invoice\s*(?:number|no\.?|#|id)[\s:]*(?:[\r\n]+\s*)?([a-zA-Z0-9\-_/]{3,30})/i,
-      /\b(?:inv|bill)\s*(?:number|no\.?|#)[\s:]*(?:[\r\n]+\s*)?([a-zA-Z0-9\-_/]{3,30})/i,
+      /\b(?:tax\s*)?invoice\s*(?:number\b|no\.?\b|#|\bid\b)[\s:]*(?:[\r\n]+\s*)?([a-zA-Z0-9\-_/]{3,30})/i,
+      /\b(?:inv|bill)\s*(?:number\b|no\.?\b|#|\bid\b)[\s:]*(?:[\r\n]+\s*)?([a-zA-Z0-9\-_/]{3,30})/i,
       /\binv[-_][a-zA-Z0-9\-_]{3,25}\b/i,
       /(?:^|\n)\s*invoice[\s:#]+([a-zA-Z0-9\-_/]{3,30})/i,
     ];
@@ -241,14 +241,14 @@ export class DeterministicParserService {
       subtotal = NormalizationHelper.normalizeAmount(subtotalMatch[1]);
     }
 
-    // Check for combined tax or split CGST + SGST
-    const taxMatch = text.match(/(?:grand\s*tax|total\s*tax|\btax\b|\bgst\b|\bigst\b)[\s:]*(?:[\r\n]+\s*)?[^\d\s]*([\d,]+(?:\.\d+)?)/i);
+    // Check for combined tax or split CGST + SGST (ignoring percentage rate like "GST 18%: ₹14,400")
+    const taxMatch = text.match(/(?:grand\s*tax|total\s*tax|tax\s*amount|total\s*gst|\btax\b|\bgst\b|\bigst\b)(?:\s*\(?\d+(?:\.\d+)?%\)?)?[\s:]*(?:[\r\n]+\s*)?[^\d\s]*([\d,]+(?:\.\d+)?)/i);
     if (taxMatch) {
       tax = NormalizationHelper.normalizeAmount(taxMatch[1]);
     } else {
       // Check if CGST and SGST are on separate summary lines
-      const cgstMatch = text.match(/\bcgst[\s:]*(?:[\r\n]+\s*)?[^\d\s]*([\d,]+(?:\.\d+)?)/i);
-      const sgstMatch = text.match(/\bsgst[\s:]*(?:[\r\n]+\s*)?[^\d\s]*([\d,]+(?:\.\d+)?)/i);
+      const cgstMatch = text.match(/\bcgst(?:\s*\(?\d+(?:\.\d+)?%\)?)?[\s:]*(?:[\r\n]+\s*)?[^\d\s]*([\d,]+(?:\.\d+)?)/i);
+      const sgstMatch = text.match(/\bsgst(?:\s*\(?\d+(?:\.\d+)?%\)?)?[\s:]*(?:[\r\n]+\s*)?[^\d\s]*([\d,]+(?:\.\d+)?)/i);
       if (cgstMatch && sgstMatch) {
         const cgstAmt = NormalizationHelper.normalizeAmount(cgstMatch[1]) || 0;
         const sgstAmt = NormalizationHelper.normalizeAmount(sgstMatch[1]) || 0;
@@ -256,8 +256,8 @@ export class DeterministicParserService {
       }
     }
 
-    const totalMatch = text.match(/(?:grand\s*total|invoice\s*total|total\s*amount|net\s*payable|amount\s*due)[\s:]*(?:[\r\n]+\s*)?[^\d\s]*([\d,]+(?:\.\d+)?)/i)
-      || text.match(/(?:^|\n)\s*(?:invoice\s*)?total[\s:]*(?:[\r\n]+\s*)?[^\d\s]*([\d,]+(?:\.\d+)?)/i);
+    const totalMatch = text.match(/(?:grand\s*total|invoice\s*total|total\s*amount|total\s*payable|net\s*payable|payable\s*amount|amount\s*due|total\s*due|balance\s*due|final\s*amount)[\s:]*(?:[\r\n]+\s*)?[^\d\s]*([\d,]+(?:\.\d+)?)/i)
+      || text.match(/(?:^|\n)\s*(?:invoice\s*|total\s*)?(?:total|payable|amount)[\s:]*(?:[\r\n]+\s*)?[^\d\s]*([\d,]+(?:\.\d+)?)/i);
     if (totalMatch) {
       amount = NormalizationHelper.normalizeAmount(totalMatch[1]);
     }
@@ -266,7 +266,7 @@ export class DeterministicParserService {
     if (!amount) {
       for (let i = 0; i < lines.length - 1; i++) {
         const l = lines[i];
-        if (/^(?:grand\s*total|invoice\s*total|total\s*amount|amount\s*due|net\s*payable|total)$/i.test(l)) {
+        if (/^(?:grand\s*total|invoice\s*total|total\s*amount|total\s*payable|payable\s*amount|amount\s*due|net\s*payable|total)$/i.test(l)) {
           const next = lines[i + 1];
           const numMatch = next.match(/[\d,]+(?:\.\d+)?/);
           if (numMatch) {
@@ -291,6 +291,12 @@ export class DeterministicParserService {
     }
     if (amount && tax && !subtotal) {
       subtotal = Math.round((amount - tax + discount) * 100) / 100;
+    }
+    if (subtotal && amount && tax === null) {
+      const calculatedTax = Math.round((amount - subtotal + discount) * 100) / 100;
+      if (calculatedTax >= 0 && calculatedTax < amount) {
+        tax = calculatedTax;
+      }
     }
 
     // 10. Bank Details (Strictly null if absent — never invent or use defaults)

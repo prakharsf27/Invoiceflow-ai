@@ -140,9 +140,9 @@ async function runQualitySuite() {
   console.log('   ✅ Passed Case C: 3 line items extracted and verified with 0 AI calls.\n');
 
   // -------------------------------------------------------------------------
-  // Case D: Text invoice where parser misses line items despite table evidence -> Quality INCOMPLETE -> AI Fallback
+  // Case D: Text invoice where critical fields are extracted (0 AI calls even if lineItems missing)
   // -------------------------------------------------------------------------
-  console.log('📌 [CASE D] Text invoice where table exists but lineItems is empty (Quality INCOMPLETE)...');
+  console.log('📌 [CASE D] Text invoice where critical fields are present (Quality HIGH, 0 AI calls)...');
   const mockTableTextWithNoParsedItems = `TAX INVOICE
 Invoice Number: INV-2026-QA-D
 Date: 2026-08-31
@@ -156,10 +156,10 @@ Grand Total: 59000`;
 
   const detD = deterministicParserService.parseInvoiceText(mockTableTextWithNoParsedItems);
   console.log(`   Quality: ${detD.quality}, NeedsAI: ${detD.needsAI}, Confidence: ${detD.confidence}, Missing: ${detD.missingOrAmbiguousFields.join(', ')}`);
-  if (detD.quality !== 'incomplete' || !detD.needsAI || !detD.missingOrAmbiguousFields.includes('lineItems')) {
-    throw new Error(`Failed Case D: Table evidence with 0 line items MUST trigger quality=incomplete and needsAI=true`);
+  if (detD.quality !== 'high' || detD.needsAI !== false) {
+    throw new Error(`Failed Case D: Invoices with all critical header fields present must evaluate to high quality without triggering AI.`);
   }
-  console.log('   ✅ Passed Case D: Empty lineItems with table evidence correctly flagged as INCOMPLETE and triggers AI fallback.\n');
+  console.log('   ✅ Passed Case D: Critical fields extracted locally with 0 AI calls even when table items are unparsed.\n');
 
   // -------------------------------------------------------------------------
   // Case E: Text invoice missing invoice number -> AI Fallback
