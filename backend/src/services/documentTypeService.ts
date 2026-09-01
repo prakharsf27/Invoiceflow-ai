@@ -9,30 +9,24 @@ class DocumentTypeService {
 
     // Purchase Order Patterns
     if (
-      /\bpo[-_]?\d+/i.test(fn) ||
+      /\bpo\b|\bpo[-_]|\bp\.o\.?\b|purchase[-_ ]?order/i.test(fn) ||
       fn.includes('purchase_order') ||
       fn.includes('purchase-order') ||
       fn.includes('purchaseorder') ||
-      fn.startsWith('po_') ||
-      fn.startsWith('po-') ||
-      fn.startsWith('po ') ||
-      fn.includes('_po_') ||
-      fn.includes('-po-')
+      fn.includes('po_') ||
+      fn.includes('po-')
     ) {
       return 'purchase_order';
     }
 
     // Invoice Patterns
     if (
-      /\binv[-_]?\d+/i.test(fn) ||
+      /\binv\b|\binv[-_]|invoice|tax[-_ ]?invoice|\bbill\b/i.test(fn) ||
       fn.includes('invoice') ||
       fn.includes('tax_invoice') ||
       fn.includes('bill') ||
-      fn.startsWith('inv_') ||
-      fn.startsWith('inv-') ||
-      fn.startsWith('inv ') ||
-      fn.includes('_inv_') ||
-      fn.includes('-inv-')
+      fn.includes('inv_') ||
+      fn.includes('inv-')
     ) {
       return 'invoice';
     }

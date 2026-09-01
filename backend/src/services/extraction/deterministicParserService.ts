@@ -89,16 +89,19 @@ export class DeterministicParserService {
       }
     }
 
-    // Multiline fallback: Label on line i, Value on line i+1
+    // Multiline fallback: Label on line i, Value on line i+1 (or next non-empty line)
     if (!invoiceNumber) {
       for (let i = 0; i < lines.length - 1; i++) {
         const l = lines[i];
-        if (/^(?:tax\s*)?invoice\s*(?:number|no\.?|#|id)$/i.test(l) || /^(?:inv|bill)\s*(?:number|no\.?|#)$/i.test(l)) {
-          const next = lines[i + 1];
-          if (/^[a-zA-Z0-9\-_/]{3,30}$/.test(next) && !/^(?:date|tax|bill|supplier|buyer)/i.test(next)) {
-            invoiceNumber = NormalizationHelper.normalizeInvoiceNumber(next);
-            if (invoiceNumber) break;
+        if (/^(?:tax\s*)?invoice\s*(?:number|no\.?|#|id|num)?[:\s]*$/i.test(l) || /^(?:inv|bill)\s*(?:number|no\.?|#)[:\s]*$/i.test(l)) {
+          for (let j = i + 1; j < lines.length && j < i + 4; j++) {
+            const next = lines[j].trim();
+            if (next && /^[a-zA-Z0-9\-_/]{2,30}$/.test(next) && !/^(?:date|tax|bill|supplier|buyer|due|amount|total|subtotal)/i.test(next)) {
+              invoiceNumber = NormalizationHelper.normalizeInvoiceNumber(next);
+              if (invoiceNumber) break;
+            }
           }
+          if (invoiceNumber) break;
         }
       }
     }
@@ -121,6 +124,26 @@ export class DeterministicParserService {
       }
     }
 
+    // Multiline fallback for invoice date
+    if (!invoiceDate) {
+      for (let i = 0; i < lines.length - 1; i++) {
+        const l = lines[i];
+        if (/^(?:tax\s*)?invoice\s*date[:\s]*$/i.test(l) || /^(?:bill|issued|issue)\s*date[:\s]*$/i.test(l) || /^date[:\s]*$/i.test(l)) {
+          for (let j = i + 1; j < lines.length && j < i + 4; j++) {
+            const next = lines[j].trim();
+            if (next) {
+              const norm = NormalizationHelper.normalizeDate(next);
+              if (norm) {
+                invoiceDate = norm;
+                break;
+              }
+            }
+          }
+          if (invoiceDate) break;
+        }
+      }
+    }
+
     // 3. Payment Terms Extraction
     let paymentTerms: string | null = null;
     const termsMatch = text.match(/\b(?:payment\s*terms?|terms)[\s:]*(?:[\r\n]+\s*)?([^\n\r]+)/i);
@@ -136,6 +159,26 @@ export class DeterministicParserService {
     const explicitDueDateMatch = text.match(/\b(?:due\s*date|payment\s*due\s*date|payment\s*due|due\s*on)[\s:]*(?:[\r\n]+\s*)?([^\n\r,]+)/i);
     if (explicitDueDateMatch) {
       dueDate = NormalizationHelper.normalizeDate(explicitDueDateMatch[1]);
+    }
+
+    // Multiline fallback for explicit due date
+    if (!dueDate) {
+      for (let i = 0; i < lines.length - 1; i++) {
+        const l = lines[i];
+        if (/^(?:due\s*date|payment\s*due\s*date|payment\s*due|due\s*on)[:\s]*$/i.test(l)) {
+          for (let j = i + 1; j < lines.length && j < i + 4; j++) {
+            const next = lines[j].trim();
+            if (next) {
+              const norm = NormalizationHelper.normalizeDate(next);
+              if (norm) {
+                dueDate = norm;
+                break;
+              }
+            }
+          }
+          if (dueDate) break;
+        }
+      }
     }
 
     // If explicit due date was not in document, derive from invoiceDate + paymentTerms
@@ -158,6 +201,23 @@ export class DeterministicParserService {
       }
     }
 
+    // Multiline fallback for PO reference
+    if (!poNumber) {
+      for (let i = 0; i < lines.length - 1; i++) {
+        const l = lines[i];
+        if (/^(?:purchase\s*order(?:\s*ref|\s*number|\s*no\.?)?|po\s*(?:reference|number|no\.?|#)|p\.o\.?\s*(?:no\.?|#)?|order\s*ref(?:erence)?)[:\s]*$/i.test(l) || /^purchase\s*order[:\s]*$/i.test(l)) {
+          for (let j = i + 1; j < lines.length && j < i + 4; j++) {
+            const next = lines[j].trim();
+            if (next && !/^(?:date|tax|bill|supplier|buyer|due|amount|total|subtotal|invoice)/i.test(next)) {
+              poNumber = NormalizationHelper.normalizePONumber(next);
+              if (poNumber) break;
+            }
+          }
+          if (poNumber) break;
+        }
+      }
+    }
+
     // 6. Supplier / Seller Name & GSTIN Extraction
     let supplierName: string | null = null;
     let supplierGstin: string | null = null;
@@ -171,15 +231,18 @@ export class DeterministicParserService {
     if (!supplierName) {
       for (let i = 0; i < lines.length - 1; i++) {
         const l = lines[i];
-        if (/^(?:seller(?:\s*name)?|supplier(?:\s*name)?|vendor(?:\s*name)?|billed\s*by)$/i.test(l)) {
-          const next = lines[i + 1];
-          if (!/^(?:tax|invoice|bill|date|number|gstin|buyer|seller|shipping|delivery|item|code)/i.test(next)) {
-            const cleaned = NormalizationHelper.cleanCompanyName(next);
-            if (cleaned && cleaned.length >= 3) {
-              supplierName = cleaned;
-              break;
+        if (/^(?:seller(?:\s*name)?|supplier(?:\s*name)?|vendor(?:\s*name)?|billed\s*by|from)[:\s]*$/i.test(l)) {
+          for (let j = i + 1; j < lines.length && j < i + 4; j++) {
+            const next = lines[j].trim();
+            if (next && !/^(?:tax\b|invoice\b|bill\b|date\b|number\b|gstin\b|buyer\b|seller\b|shipping\b|delivery\b|item\b|code\b)/i.test(next)) {
+              const cleaned = NormalizationHelper.cleanCompanyName(next);
+              if (cleaned && cleaned.length >= 3) {
+                supplierName = cleaned;
+                break;
+              }
             }
           }
+          if (supplierName) break;
         }
       }
     }
@@ -262,20 +325,65 @@ export class DeterministicParserService {
       amount = NormalizationHelper.normalizeAmount(totalMatch[1]);
     }
 
+    // Multiline fallback for subtotal
+    if (!subtotal) {
+      for (let i = 0; i < lines.length - 1; i++) {
+        const l = lines[i];
+        if (/^(?:sub\s*total|subtotal|taxable\s*value|taxable\s*amount)[:\s]*$/i.test(l)) {
+          for (let j = i + 1; j < lines.length && j < i + 4; j++) {
+            const next = lines[j].trim();
+            const numMatch = next.match(/[\d,]+(?:\.\d+)?/);
+            if (numMatch) {
+              const parsedSub = NormalizationHelper.normalizeAmount(numMatch[0]);
+              if (parsedSub && parsedSub > 0) {
+                subtotal = parsedSub;
+                break;
+              }
+            }
+          }
+          if (subtotal) break;
+        }
+      }
+    }
+
+    // Multiline fallback for tax
+    if (!tax) {
+      for (let i = 0; i < lines.length - 1; i++) {
+        const l = lines[i];
+        if (/^(?:grand\s*tax|total\s*tax|tax\s*amount|total\s*gst|tax|gst|igst|cgst\s*\+\s*sgst)(?:\s*[@(@]?\s*\d+(?:\.\d+)?\s*%\)?)?[:\s]*$/i.test(l)) {
+          for (let j = i + 1; j < lines.length && j < i + 4; j++) {
+            const next = lines[j].trim();
+            const numMatch = next.match(/[\d,]+(?:\.\d+)?/);
+            if (numMatch) {
+              const parsedTax = NormalizationHelper.normalizeAmount(numMatch[0]);
+              if (parsedTax && parsedTax > 0) {
+                tax = parsedTax;
+                break;
+              }
+            }
+          }
+          if (tax) break;
+        }
+      }
+    }
+
     // Multiline fallback: "Total Amount" on line i, "₹1,25,000" on line i+1
     if (!amount) {
       for (let i = 0; i < lines.length - 1; i++) {
         const l = lines[i];
-        if (/^(?:grand\s*total|invoice\s*total|total\s*amount|total\s*payable|payable\s*amount|amount\s*due|net\s*payable|total)$/i.test(l)) {
-          const next = lines[i + 1];
-          const numMatch = next.match(/[\d,]+(?:\.\d+)?/);
-          if (numMatch) {
-            const parsedAmt = NormalizationHelper.normalizeAmount(numMatch[0]);
-            if (parsedAmt && parsedAmt > 0) {
-              amount = parsedAmt;
-              break;
+        if (/^(?:grand\s*total|invoice\s*total|total\s*amount|total\s*payable|payable\s*amount|amount\s*due|net\s*payable|total)[:\s]*$/i.test(l)) {
+          for (let j = i + 1; j < lines.length && j < i + 4; j++) {
+            const next = lines[j].trim();
+            const numMatch = next.match(/[\d,]+(?:\.\d+)?/);
+            if (numMatch) {
+              const parsedAmt = NormalizationHelper.normalizeAmount(numMatch[0]);
+              if (parsedAmt && parsedAmt > 0) {
+                amount = parsedAmt;
+                break;
+              }
             }
           }
+          if (amount) break;
         }
       }
     }
@@ -383,25 +491,48 @@ export class DeterministicParserService {
       }
     }
 
-    // Multiline fallback: "PO Number" on line i, "PO-2026-00421" on line i+1
+    // Multiline fallback: "PO Number" on line i, "PO-2026-00421" on line i+1 (or next non-empty line)
     if (!poNumber) {
       for (let i = 0; i < lines.length - 1; i++) {
         const l = lines[i];
-        if (/^(?:purchase\s*order(?:\s*number|\s*no\.?|\s*#|\s*id)?|po\s*(?:number|no\.?|#|id)?)$/i.test(l)) {
-          const next = lines[i + 1];
-          if (/^[a-zA-Z0-9\-_/]{3,30}$/.test(next) && !/^(?:date|supplier|buyer|item)/i.test(next)) {
-            poNumber = NormalizationHelper.normalizePONumber(next);
-            if (poNumber) break;
+        if (/^(?:purchase\s*order(?:\s*number|\s*no\.?|\s*#|\s*id)?|po\s*(?:number|no\.?|#|id)?|order\s*ref(?:erence)?)[:\s]*$/i.test(l)) {
+          for (let j = i + 1; j < lines.length && j < i + 4; j++) {
+            const next = lines[j].trim();
+            if (next && !/^(?:date|tax|bill|supplier|buyer|due|amount|total|subtotal|item)/i.test(next)) {
+              poNumber = NormalizationHelper.normalizePONumber(next);
+              if (poNumber) break;
+            }
           }
+          if (poNumber) break;
         }
       }
     }
 
     // 2. PO Date Extraction
     let poDate: string | null = null;
-    const dateMatch = text.match(/\b(?:order|po|issued)?\s*date[\s:]*(?:[\r\n]+\s*)?([^\n\r,]+)/i);
+    const dateMatch = text.match(/\b(?:order|po|issued|purchase\s*order)?\s*date[\s:]*(?:[\r\n]+\s*)?([^\n\r,]+)/i);
     if (dateMatch) {
       poDate = NormalizationHelper.normalizeDate(dateMatch[1]);
+    }
+
+    // Multiline fallback for PO date
+    if (!poDate) {
+      for (let i = 0; i < lines.length - 1; i++) {
+        const l = lines[i];
+        if (/^(?:order|po|issued|purchase\s*order)?\s*date[:\s]*$/i.test(l) || /^date[:\s]*$/i.test(l)) {
+          for (let j = i + 1; j < lines.length && j < i + 4; j++) {
+            const next = lines[j].trim();
+            if (next) {
+              const norm = NormalizationHelper.normalizeDate(next);
+              if (norm) {
+                poDate = norm;
+                break;
+              }
+            }
+          }
+          if (poDate) break;
+        }
+      }
     }
 
     // 3. Buyer & Supplier Info
@@ -424,15 +555,18 @@ export class DeterministicParserService {
     if (!supplierName) {
       for (let i = 0; i < lines.length - 1; i++) {
         const l = lines[i];
-        if (/^(?:supplier(?:\s*name)?|vendor(?:\s*name)?|seller)$/i.test(l)) {
-          const next = lines[i + 1];
-          if (!/^(?:date|buyer|gstin|item|delivery)/i.test(next)) {
-            const cleaned = NormalizationHelper.cleanCompanyName(next);
-            if (cleaned && cleaned.length >= 3) {
-              supplierName = cleaned;
-              break;
+        if (/^(?:supplier(?:\s*name)?|vendor(?:\s*name)?|seller|to)[:\s]*$/i.test(l)) {
+          for (let j = i + 1; j < lines.length && j < i + 4; j++) {
+            const next = lines[j].trim();
+            if (next && !/^(?:date\b|buyer\b|gstin\b|item\b|delivery\b|tax\b|total\b)/i.test(next)) {
+              const cleaned = NormalizationHelper.cleanCompanyName(next);
+              if (cleaned && cleaned.length >= 3) {
+                supplierName = cleaned;
+                break;
+              }
             }
           }
+          if (supplierName) break;
         }
       }
     }
@@ -520,20 +654,65 @@ export class DeterministicParserService {
       total = NormalizationHelper.normalizeAmount(totalMatch[1]);
     }
 
+    // Multiline fallback for subtotal
+    if (!subtotal) {
+      for (let i = 0; i < lines.length - 1; i++) {
+        const l = lines[i];
+        if (/^(?:sub\s*total|subtotal|taxable\s*amount)[:\s]*$/i.test(l)) {
+          for (let j = i + 1; j < lines.length && j < i + 4; j++) {
+            const next = lines[j].trim();
+            const numMatch = next.match(/[\d,]+(?:\.\d+)?/);
+            if (numMatch) {
+              const parsedSub = NormalizationHelper.normalizeAmount(numMatch[0]);
+              if (parsedSub && parsedSub > 0) {
+                subtotal = parsedSub;
+                break;
+              }
+            }
+          }
+          if (subtotal) break;
+        }
+      }
+    }
+
+    // Multiline fallback for tax
+    if (!tax) {
+      for (let i = 0; i < lines.length - 1; i++) {
+        const l = lines[i];
+        if (/^(?:grand\s*tax|total\s*tax|tax\s*amount|total\s*gst|tax|gst|igst|cgst\s*\+\s*sgst)(?:\s*[@(@]?\s*\d+(?:\.\d+)?\s*%\)?)?[:\s]*$/i.test(l)) {
+          for (let j = i + 1; j < lines.length && j < i + 4; j++) {
+            const next = lines[j].trim();
+            const numMatch = next.match(/[\d,]+(?:\.\d+)?/);
+            if (numMatch) {
+              const parsedTax = NormalizationHelper.normalizeAmount(numMatch[0]);
+              if (parsedTax && parsedTax > 0) {
+                tax = parsedTax;
+                break;
+              }
+            }
+          }
+          if (tax) break;
+        }
+      }
+    }
+
     // Multiline fallback for total
     if (!total) {
       for (let i = 0; i < lines.length - 1; i++) {
         const l = lines[i];
-        if (/^(?:grand\s*total|po\s*total|order\s*total|total\s*amount|total)$/i.test(l)) {
-          const next = lines[i + 1];
-          const numMatch = next.match(/[\d,]+(?:\.\d+)?/);
-          if (numMatch) {
-            const parsedTotal = NormalizationHelper.normalizeAmount(numMatch[0]);
-            if (parsedTotal && parsedTotal > 0) {
-              total = parsedTotal;
-              break;
+        if (/^(?:grand\s*total|po\s*total|order\s*total|total\s*amount|total)[:\s]*$/i.test(l)) {
+          for (let j = i + 1; j < lines.length && j < i + 4; j++) {
+            const next = lines[j].trim();
+            const numMatch = next.match(/[\d,]+(?:\.\d+)?/);
+            if (numMatch) {
+              const parsedTotal = NormalizationHelper.normalizeAmount(numMatch[0]);
+              if (parsedTotal && parsedTotal > 0) {
+                total = parsedTotal;
+                break;
+              }
             }
           }
+          if (total) break;
         }
       }
     }
@@ -745,7 +924,7 @@ export class DeterministicParserService {
 
     // Strategy 2: Multi-line / Block parsing (if Strategy 1 found 0 items)
     if (items.length === 0) {
-      const blockRegex = /(?:(\d+)[.)]\s+)?([A-Za-z0-9\s\-_.&/]{3,60}?)\s*(?:[\r\n]+|\s+)Qty:\s*(\d+(?:\.\d+)?)\s*(?:[\r\n]+|\s+)Unit\s*Price:\s*[^\d\s]*([\d,]+(?:\.\d+)?)\s*(?:[\r\n]+|\s+)Tax\s*Rate:\s*(\d+(?:\.\d+)?%?)\s*(?:[\r\n]+|\s+)Tax\s*Amount:\s*[^\d\s]*([\d,]+(?:\.\d+)?)\s*(?:[\r\n]+|\s+)Total:\s*[^\d\s]*([\d,]+(?:\.\d+)?)/gi;
+      const blockRegex = /(?:(\d+)[.)]\s+)?([A-Za-z0-9\s\-_.&/]{3,60}?)\s*(?:[\r\n]+|\s+)Qty:\s*(\d+(?:\.\d+)?)\s*(?:[\r\n]+|\s+)Unit\s*Price:\s*(?:[^\d\r\n]*?)?([\d,]+(?:\.\d+)?)\s*(?:[\r\n]+|\s+)Tax\s*Rate:\s*(\d+(?:\.\d+)?%?)\s*(?:[\r\n]+|\s+)Tax\s*Amount:\s*(?:[^\d\r\n]*?)?([\d,]+(?:\.\d+)?)\s*(?:[\r\n]+|\s+)Total:\s*(?:[^\d\r\n]*?)?([\d,]+(?:\.\d+)?)/gi;
       let bMatch;
       while ((bMatch = blockRegex.exec(text)) !== null) {
         const itemCode = bMatch[1] ? bMatch[1].trim() : null;

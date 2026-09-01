@@ -396,11 +396,14 @@ class DocumentProcessingService {
         );
 
         // Sync or Create Invoice record in MongoDB scoped to companyId
+        const newInvoiceId = `inv-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
         const createdInvoice = await InvoiceModel.findOneAndUpdate(
           { companyId, invoiceNumber: new RegExp(`^${invNum.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') },
           {
+            $setOnInsert: {
+              id: newInvoiceId,
+            },
             $set: {
-              id: `inv-${Date.now()}`,
               invoiceNumber: invNum,
               companyId,
               createdBy: userId,
@@ -435,7 +438,7 @@ class DocumentProcessingService {
                 isChangedFromPrevious: false,
               },
               items: valRes.processedItems.map((i, idx) => ({
-                id: `item-${Date.now()}-${idx + 1}`,
+                id: `item-${Date.now()}-${idx + 1}-${Math.random().toString(36).substring(2, 6)}`,
                 description: i.description,
                 quantity: i.quantity,
                 unitPrice: i.unitPrice,
