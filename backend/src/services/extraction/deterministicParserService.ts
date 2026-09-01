@@ -67,7 +67,8 @@ export class DeterministicParserService {
     text: string,
     sourceMethod: 'pdf_text' | 'ocr' = 'pdf_text'
   ): DeterministicResult<ExtractedInvoiceData> {
-    const lines = text.split('\n').map((l) => l.trim()).filter(Boolean);
+    const normalizedText = NormalizationHelper.normalizeOCRText(text);
+    const lines = normalizedText.split('\n').map((l) => l.trim()).filter(Boolean);
 
     // 1. Invoice Number Extraction (Strictly labeled)
     let invoiceNumber: string | null = null;
@@ -78,7 +79,7 @@ export class DeterministicParserService {
       /(?:^|\n)\s*invoice[\s:#]+([a-zA-Z0-9\-_/]{3,30})/i,
     ];
     for (const pat of invNumPatterns) {
-      const match = text.match(pat);
+      const match = normalizedText.match(pat);
       if (match) {
         invoiceNumber = NormalizationHelper.normalizeInvoiceNumber(match[1] || match[0]);
         if (invoiceNumber && !/^(?:invoice|tax|bill|date|number|no)$/i.test(invoiceNumber)) {
@@ -114,7 +115,7 @@ export class DeterministicParserService {
       /\bdate\s*(?:of\s*issue)?[\s:]*(?:[\r\n]+\s*)?([^\n\r,]+)/i,
     ];
     for (const pat of invDatePatterns) {
-      const match = text.match(pat);
+      const match = normalizedText.match(pat);
       if (match) {
         const norm = NormalizationHelper.normalizeDate(match[1]);
         if (norm) {
@@ -146,7 +147,7 @@ export class DeterministicParserService {
 
     // 3. Payment Terms Extraction
     let paymentTerms: string | null = null;
-    const termsMatch = text.match(/\b(?:payment\s*terms?|terms)[\s:]*(?:[\r\n]+\s*)?([^\n\r]+)/i);
+    const termsMatch = normalizedText.match(/\b(?:payment\s*terms?|terms)[\s:]*(?:[\r\n]+\s*)?([^\n\r]+)/i);
     if (termsMatch) {
       const rawTerms = termsMatch[1].trim();
       if (!/^(?:tax|invoice|subtotal|total|bank|date)/i.test(rawTerms)) {
@@ -156,7 +157,7 @@ export class DeterministicParserService {
 
     // 4. Due Date Extraction (Semantic rule: explicit due date > calculated terms > null. Never invoiceDate.)
     let dueDate: string | null = null;
-    const explicitDueDateMatch = text.match(/\b(?:due\s*date|payment\s*due\s*date|payment\s*due|due\s*on)[\s:]*(?:[\r\n]+\s*)?([^\n\r,]+)/i);
+    const explicitDueDateMatch = normalizedText.match(/\b(?:due\s*date|payment\s*due\s*date|payment\s*due|due\s*on)[\s:]*(?:[\r\n]+\s*)?([^\n\r,]+)/i);
     if (explicitDueDateMatch) {
       dueDate = NormalizationHelper.normalizeDate(explicitDueDateMatch[1]);
     }
@@ -189,23 +190,23 @@ export class DeterministicParserService {
     // 5. PO Number / Reference Extraction (Optional for invoice)
     let poNumber: string | null = null;
     const poPatterns = [
-      /\b(?:po\s*(?:reference|number|no\.?|#)|p\.o\.?\s*(?:no\.?|#)?|purchase\s*order(?:\s*ref|\s*number)?)[\s:]*(?:[\r\n]+\s*)?([a-zA-Z0-9\-_/]{3,30})/i,
-      /\bpo[-_]\d{4}[-_]\d{3,8}\b/i,
+      /\b(?:purchase\s*order(?:\s*ref|\s*number|\s*no\.?|\s*#)?|p\.?o\.?\s*(?:reference|number|no\.?|#)?|po\b)[\s:]*(?:[\r\n]+\s*)?([a-zA-Z0-9\-_/]{3,30})/i,
+      /\bpo[-_]\d{4}[-_][a-zA-Z0-9\-_]{3,20}\b/i,
       /\b(?:order|po)\s*ref(?:erence)?[\s:]*(?:[\r\n]+\s*)?([a-zA-Z0-9\-_/]{3,30})/i,
     ];
     for (const pat of poPatterns) {
-      const match = text.match(pat);
+      const match = normalizedText.match(pat);
       if (match) {
         poNumber = NormalizationHelper.normalizePONumber(match[1] || match[0]);
         if (poNumber) break;
       }
     }
 
-    // Multiline fallback for PO reference
+    // Multiline fallback for PO reference: "PO:", "PO Number", "Purchase Order", etc.
     if (!poNumber) {
       for (let i = 0; i < lines.length - 1; i++) {
         const l = lines[i];
-        if (/^(?:purchase\s*order(?:\s*ref|\s*number|\s*no\.?)?|po\s*(?:reference|number|no\.?|#)|p\.o\.?\s*(?:no\.?|#)?|order\s*ref(?:erence)?)[:\s]*$/i.test(l) || /^purchase\s*order[:\s]*$/i.test(l)) {
+        if (/^(?:purchase\s*order(?:\s*ref|\s*number|\s*no\.?|\s*#)?|po\s*(?:reference|number|no\.?|#)?|p\.o\.?\s*(?:no\.?|#)?|order\s*ref(?:erence)?|po|p\.o\.)[:\s]*$/i.test(l)) {
           for (let j = i + 1; j < lines.length && j < i + 4; j++) {
             const next = lines[j].trim();
             if (next && !/^(?:date|tax|bill|supplier|buyer|due|amount|total|subtotal|invoice)/i.test(next)) {
@@ -222,7 +223,7 @@ export class DeterministicParserService {
     let supplierName: string | null = null;
     let supplierGstin: string | null = null;
 
-    const sellerMatch = text.match(/\b(?:seller(?:\s*name)?|supplier(?:\s*name)?|vendor(?:\s*name)?|from|billed\s*by)[\s:]*(?:[\r\n]+\s*)?([^\n\r]+)/i);
+    const sellerMatch = normalizedText.match(/\b(?:seller(?:\s*name)?|supplier(?:\s*name)?|vendor(?:\s*name)?|from|billed\s*by)[\s:]*(?:[\r\n]+\s*)?([^\n\r]+)/i);
     if (sellerMatch) {
       supplierName = NormalizationHelper.cleanCompanyName(sellerMatch[1]);
     }
@@ -234,7 +235,7 @@ export class DeterministicParserService {
         if (/^(?:seller(?:\s*name)?|supplier(?:\s*name)?|vendor(?:\s*name)?|billed\s*by|from)[:\s]*$/i.test(l)) {
           for (let j = i + 1; j < lines.length && j < i + 4; j++) {
             const next = lines[j].trim();
-            if (next && !/^(?:tax\b|invoice\b|bill\b|date\b|number\b|gstin\b|buyer\b|seller\b|shipping\b|delivery\b|item\b|code\b)/i.test(next)) {
+            if (next && !/^(?:tax\b|invoice\b|bill\b|date\b|number\b|gstin\b|buyer\b|seller\b|shipping\b|delivery\b|item\b|code\b|po\b)/i.test(next)) {
               const cleaned = NormalizationHelper.cleanCompanyName(next);
               if (cleaned && cleaned.length >= 3) {
                 supplierName = cleaned;
@@ -247,16 +248,33 @@ export class DeterministicParserService {
       }
     }
 
-    // Check for explicit Seller GSTIN first
-    const sellerGstinMatch = text.match(/\b(?:seller|supplier|vendor)\s*gstin[\s:]*(?:[\r\n]+\s*)?([a-zA-Z0-9]{15})/i)
-      || text.match(/\bgstin[\s:]*(?:[\r\n]+\s*)?([a-zA-Z0-9]{15})/i);
+    // Check for explicit Seller GSTIN first (supporting same-line or next-line)
+    const sellerGstinMatch = normalizedText.match(/\b(?:seller|supplier|vendor)?\s*gstin[:\s]*[^\S\r\n]*([a-zA-Z0-9][a-zA-Z0-9\t \-]{13,20})/i);
     if (sellerGstinMatch) {
       supplierGstin = NormalizationHelper.normalizeGSTIN(sellerGstinMatch[1]);
     }
 
+    // Multiline fallback for GSTIN
+    if (!supplierGstin) {
+      for (let i = 0; i < lines.length - 1; i++) {
+        const l = lines[i];
+        if (/^(?:seller\s*|supplier\s*)?gstin[:\s]*$/i.test(l)) {
+          for (let j = i + 1; j < lines.length && j < i + 4; j++) {
+            const next = lines[j].trim();
+            const norm = NormalizationHelper.normalizeGSTIN(next);
+            if (norm) {
+              supplierGstin = norm;
+              break;
+            }
+          }
+          if (supplierGstin) break;
+        }
+      }
+    }
+
     // Fallback: search for first GSTIN in text if not labeled
     if (!supplierGstin) {
-      supplierGstin = NormalizationHelper.normalizeGSTIN(text);
+      supplierGstin = NormalizationHelper.normalizeGSTIN(normalizedText);
     }
 
     // Fallback: If no seller line found, look near top of document for company name
@@ -495,7 +513,8 @@ export class DeterministicParserService {
     text: string,
     sourceMethod: 'pdf_text' | 'ocr' = 'pdf_text'
   ): DeterministicResult<ExtractedPOData> {
-    const lines = text.split('\n').map((l) => l.trim()).filter(Boolean);
+    const normalizedText = NormalizationHelper.normalizeOCRText(text);
+    const lines = normalizedText.split('\n').map((l) => l.trim()).filter(Boolean);
 
     // 1. PO Number Extraction
     let poNumber: string | null = null;
@@ -505,7 +524,7 @@ export class DeterministicParserService {
       /(?:^|\n)\s*(?:purchase\s*order|po)[\s:#]+([a-zA-Z0-9\-_/]{3,30})/i,
     ];
     for (const pat of poNumPatterns) {
-      const match = text.match(pat);
+      const match = normalizedText.match(pat);
       if (match) {
         poNumber = NormalizationHelper.normalizePONumber(match[1] || match[0]);
         if (poNumber) break;
@@ -516,7 +535,7 @@ export class DeterministicParserService {
     if (!poNumber) {
       for (let i = 0; i < lines.length - 1; i++) {
         const l = lines[i];
-        if (/^(?:purchase\s*order(?:\s*number|\s*no\.?|\s*#|\s*id)?|po\s*(?:number|no\.?|#|id)?|order\s*ref(?:erence)?)[:\s]*$/i.test(l)) {
+        if (/^(?:purchase\s*order(?:\s*number|\s*no\.?|\s*#|\s*id)?|po\s*(?:number|no\.?|#|id)?|order\s*ref(?:erence)?|po|p\.o\.)[:\s]*$/i.test(l)) {
           for (let j = i + 1; j < lines.length && j < i + 4; j++) {
             const next = lines[j].trim();
             if (next && !/^(?:date|tax|bill|supplier|buyer|due|amount|total|subtotal|item)/i.test(next)) {
@@ -959,16 +978,23 @@ export class DeterministicParserService {
 
     // Strategy 2: Multi-line / Block parsing (if Strategy 1 found 0 items)
     if (items.length === 0) {
-      const blockRegex = /(?:(\d+)[.)]\s+)?([A-Za-z0-9\s\-_.&/]{3,60}?)\s*(?:[\r\n]+|\s+)Qty:\s*(\d+(?:\.\d+)?)\s*(?:[\r\n]+|\s+)Unit\s*Price:\s*(?:[^\d\r\n]*?)?([\d,]+(?:\.\d+)?)\s*(?:[\r\n]+|\s+)Tax\s*Rate:\s*(\d+(?:\.\d+)?%?)\s*(?:[\r\n]+|\s+)Tax\s*Amount:\s*(?:[^\d\r\n]*?)?([\d,]+(?:\.\d+)?)\s*(?:[\r\n]+|\s+)Total:\s*(?:[^\d\r\n]*?)?([\d,]+(?:\.\d+)?)/gi;
+      // 2A. Block with Tax Rate / Amount:
+      const blockRegexWithTax = /(?:^|\n)[^\S\r\n]*(?:(?:line\s*item|item)[:\s]*)?(?:(\d+)[.)]\s+)?([^\r\n]{3,80}?)[^\S\r\n]*(?:\r?\n)+[^\S\r\n]*(?:Qty|Quantity)[\s:]*(\d+(?:\.\d+)?)[^\S\r\n]*(?:\r?\n)+[^\S\r\n]*(?:Unit\s*Price|Rate|Price)[\s:]*(?:[^\d\r\n]*?)?([\d,]+(?:\.\d+)?)[^\S\r\n]*(?:\r?\n)+[^\S\r\n]*(?:Tax\s*(?:Rate|Amount)?|GST)[\s:]*(\d+(?:\.\d+)?%?)(?:[^\S\r\n]*(?:\r?\n)+[^\S\r\n]*(?:Tax\s*Amount)[\s:]*(?:[^\d\r\n]*?)?([\d,]+(?:\.\d+)?))?[^\S\r\n]*(?:\r?\n)+[^\S\r\n]*(?:Total|Amount)[\s:]*(?:[^\d\r\n]*?)?([\d,]+(?:\.\d+)?)/gi;
       let bMatch;
-      while ((bMatch = blockRegex.exec(text)) !== null) {
+      while ((bMatch = blockRegexWithTax.exec(text)) !== null) {
         const itemCode = bMatch[1] ? bMatch[1].trim() : null;
-        let desc = bMatch[2].trim().replace(/^\d+[.)]\s*/, '');
+        let desc = bMatch[2].trim().replace(/^(?:line\s*item|item)[:\s]*/i, '').replace(/^\d+[.)]\s*/, '');
         const qty = parseFloat(bMatch[3]) || 1;
         const unitPrice = NormalizationHelper.normalizeAmount(bMatch[4]) || 0;
-        const taxRate = bMatch[5] ? parseFloat(bMatch[5].replace('%', '')) || 18 : 18;
-        const taxAmount = NormalizationHelper.normalizeAmount(bMatch[6]) || 0;
-        const total = NormalizationHelper.normalizeAmount(bMatch[7]) || (qty * unitPrice);
+        const taxRate = bMatch[5] ? parseFloat(bMatch[5].replace('%', '')) : null;
+        const taxAmount = bMatch[6] ? NormalizationHelper.normalizeAmount(bMatch[6]) : null;
+        const declaredTotal = NormalizationHelper.normalizeAmount(bMatch[7]);
+
+        const lineSubtotal = Math.round(qty * unitPrice * 100) / 100;
+        const finalTaxAmount = taxAmount !== null
+          ? taxAmount
+          : (taxRate !== null ? Math.round((lineSubtotal * taxRate / 100) * 100) / 100 : (declaredTotal !== null && declaredTotal > lineSubtotal ? Math.round((declaredTotal - lineSubtotal) * 100) / 100 : 0));
+        const finalTotal = declaredTotal !== null ? declaredTotal : Math.round((lineSubtotal + finalTaxAmount) * 100) / 100;
 
         items.push({
           itemCode,
@@ -976,9 +1002,32 @@ export class DeterministicParserService {
           quantity: qty,
           unitPrice,
           taxRate,
-          taxAmount,
-          total,
+          taxAmount: finalTaxAmount,
+          total: finalTotal,
         });
+      }
+
+      // 2B. Block without Tax (if 2A found 0 items)
+      if (items.length === 0) {
+        const blockRegexNoTax = /(?:^|\n)[^\S\r\n]*(?:(?:line\s*item|item)[:\s]*)?(?:(\d+)[.)]\s+)?([^\r\n]{3,80}?)[^\S\r\n]*(?:\r?\n)+[^\S\r\n]*(?:Qty|Quantity)[\s:]*(\d+(?:\.\d+)?)[^\S\r\n]*(?:\r?\n)+[^\S\r\n]*(?:Unit\s*Price|Rate|Price)[\s:]*(?:[^\d\r\n]*?)?([\d,]+(?:\.\d+)?)[^\S\r\n]*(?:\r?\n)+[^\S\r\n]*(?:Total|Amount)[\s:]*(?:[^\d\r\n]*?)?([\d,]+(?:\.\d+)?)/gi;
+        let bMatchNoTax;
+        while ((bMatchNoTax = blockRegexNoTax.exec(text)) !== null) {
+          const itemCode = bMatchNoTax[1] ? bMatchNoTax[1].trim() : null;
+          let desc = bMatchNoTax[2].trim().replace(/^(?:line\s*item|item)[:\s]*/i, '').replace(/^\d+[.)]\s*/, '');
+          const qty = parseFloat(bMatchNoTax[3]) || 1;
+          const unitPrice = NormalizationHelper.normalizeAmount(bMatchNoTax[4]) || 0;
+          const total = NormalizationHelper.normalizeAmount(bMatchNoTax[5]) || (qty * unitPrice);
+
+          items.push({
+            itemCode,
+            description: desc,
+            quantity: qty,
+            unitPrice,
+            taxRate: null,
+            taxAmount: 0,
+            total,
+          });
+        }
       }
     }
 

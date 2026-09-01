@@ -30,17 +30,24 @@ class DocumentValidationService {
       const description = String(item.description || 'Line Item').trim();
       const quantity = typeof item.quantity === 'number' && item.quantity > 0 ? item.quantity : 1;
       const unitPrice = typeof item.unitPrice === 'number' && item.unitPrice >= 0 ? item.unitPrice : 0;
-      const taxRate = typeof item.taxRate === 'number' && item.taxRate >= 0 ? item.taxRate : 18;
+      const hasExplicitTaxRate = typeof item.taxRate === 'number' && item.taxRate >= 0;
+      const taxRate = hasExplicitTaxRate ? item.taxRate : null;
+      const declaredTaxAmount = typeof item.taxAmount === 'number' && item.taxAmount >= 0 ? item.taxAmount : null;
+      const declaredTotal = typeof item.total === 'number' && item.total > 0 ? item.total : null;
 
       const lineSubtotal = Number((quantity * unitPrice).toFixed(2));
-      const taxAmount = Number(((lineSubtotal * taxRate) / 100).toFixed(2));
-      const total = Number((lineSubtotal + taxAmount).toFixed(2));
+      const taxAmount = declaredTaxAmount !== null
+        ? declaredTaxAmount
+        : (taxRate !== null
+          ? Number(((lineSubtotal * taxRate) / 100).toFixed(2))
+          : (declaredTotal !== null && declaredTotal > lineSubtotal ? Number((declaredTotal - lineSubtotal).toFixed(2)) : 0));
+      const total = declaredTotal !== null ? declaredTotal : Number((lineSubtotal + taxAmount).toFixed(2));
 
       return {
         description,
         quantity,
         unitPrice,
-        taxRate,
+        taxRate: taxRate ?? (lineSubtotal > 0 && taxAmount > 0 ? Number(((taxAmount / lineSubtotal) * 100).toFixed(2)) : 0),
         taxAmount,
         total,
       };
@@ -50,7 +57,7 @@ class DocumentValidationService {
       processedItems.reduce((sum: number, item: any) => sum + item.quantity * item.unitPrice, 0).toFixed(2)
     );
     const computedTax = Number(
-      processedItems.reduce((sum: number, item: any) => sum + item.taxAmount, 0).toFixed(2)
+      processedItems.reduce((sum: number, item: any) => sum + (item.taxAmount || 0), 0).toFixed(2)
     );
     const computedTotal = Number(
       Math.max(0, computedSubtotal + computedTax - discount).toFixed(2)

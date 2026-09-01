@@ -120,6 +120,13 @@ class HybridExtractionService {
       if (detectedType === 'purchase_order') {
         const detResult = deterministicParserService.parsePOText(extractedText, sourceMethod);
 
+        console.log(`[DOC] Source: ${sourceMethod === 'ocr' ? 'OCR' : 'PDF_TEXT'}`);
+        console.log(`[DOC] OCR chars: ${extractedText.length}`);
+        console.log(`[DOC] Deterministic OCR extraction: ${detResult.quality.toUpperCase()}`);
+        console.log(`[DOC] Missing fields: [${detResult.missingOrAmbiguousFields.join(', ')}]`);
+        console.log(`[DOC] AI fallback required: ${detResult.needsAI ? 'YES' : 'NO'}`);
+        console.log(`[DOC] Final extraction confidence: ${detResult.confidence.toFixed(2)}`);
+
         if (detResult.quality === 'high' && !detResult.needsAI) {
           console.log(`[DOC] Deterministic extraction quality: HIGH`);
           console.log(`[DOC] AI calls required: 0`);
@@ -139,10 +146,18 @@ class HybridExtractionService {
           };
         } else {
           console.log(`[DOC] Deterministic PO extraction: ${detResult.quality.toUpperCase()} (missing critical: ${detResult.missingOrAmbiguousFields.join(', ')})`);
+          console.log(`[DOC] AI fields requested: [${detResult.missingOrAmbiguousFields.join(', ')}]`);
           console.log(`[DOC] AI calls required: 1`);
         }
       } else {
         const detResult = deterministicParserService.parseInvoiceText(extractedText, sourceMethod);
+
+        console.log(`[DOC] Source: ${sourceMethod === 'ocr' ? 'OCR' : 'PDF_TEXT'}`);
+        console.log(`[DOC] OCR chars: ${extractedText.length}`);
+        console.log(`[DOC] Deterministic OCR extraction: ${detResult.quality.toUpperCase()}`);
+        console.log(`[DOC] Missing fields: [${detResult.missingOrAmbiguousFields.join(', ')}]`);
+        console.log(`[DOC] AI fallback required: ${detResult.needsAI ? 'YES' : 'NO'}`);
+        console.log(`[DOC] Final extraction confidence: ${detResult.confidence.toFixed(2)}`);
 
         if (detResult.quality === 'high' && !detResult.needsAI) {
           console.log(`[DOC] Deterministic extraction quality: HIGH`);
@@ -163,12 +178,14 @@ class HybridExtractionService {
           };
         } else {
           console.log(`[DOC] Deterministic invoice extraction: ${detResult.quality.toUpperCase()} (missing critical: ${detResult.missingOrAmbiguousFields.join(', ')})`);
+          console.log(`[DOC] AI fields requested: [${detResult.missingOrAmbiguousFields.join(', ')}]`);
           console.log(`[DOC] AI calls required: 1`);
         }
       }
     } else {
       console.log(`[DOC] Deterministic extraction: UNREADABLE / NO TEXT`);
       console.log(`[DOC] Extraction strategy: AI`);
+      console.log(`[DOC] AI fallback required: YES`);
       console.log(`[DOC] AI calls required: 1`);
     }
 

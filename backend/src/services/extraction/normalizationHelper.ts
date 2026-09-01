@@ -18,7 +18,7 @@ export class NormalizationHelper {
     let val = raw.trim();
     if (!val) return null;
 
-    // Remove leading descriptive words: "PO No:", "PO Number:", "Order Ref:", etc.
+    // Remove leading descriptive words: "PO No:", "PO Number:", "Order Ref:", "PO:", "PO -", etc.
     val = val.replace(/^(?:p\.?o\.?\s*(?:no\.?|number|ref|#)?|purchase\s*order(?:\s*no\.?|\s*number|\s*ref)?|order\s*ref(?:erence)?)[\s#.:\-_]*/i, '');
     val = val.replace(/^#\s*/, '');
 
@@ -39,6 +39,34 @@ export class NormalizationHelper {
     }
 
     return val.toUpperCase();
+  }
+
+  /**
+   * Pre-normalize OCR text before passing to the deterministic parser.
+   * Cleans OCR confidence artifacts, normalizes line breaks, and standardizes common field labels.
+   */
+  public static normalizeOCRText(raw: string | null | undefined): string {
+    if (!raw || typeof raw !== 'string') return '';
+    let text = raw;
+
+    // 1. Normalize line endings and whitespace artifacts
+    text = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+    text = text.replace(/[\u00A0\u1680\u180e\u2000-\u200a\u202f\u205f\u3000\u200B\uFEFF]/g, ' ');
+
+    // 2. Normalize currency glyphs and OCR noise
+    text = text.replace(/[\u25A0\u25AA\uFFFD■▪●]/g, ' ');
+    text = text.replace(/(?:^|\s)(?:₹|INR|Rs\.?|Rs)(?=\s*[\d,])/gi, ' ₹');
+
+    // 3. Normalize spaced GSTIN tokens (e.g. "27 AAECA 1234 F 1 Z 5" -> "27AAECA1234F1Z5")
+    text = text.replace(/\b(\d{2})\s+([A-Z]{5})\s+(\d{4})\s+([A-Z]{1})\s*([A-Z\d]{1})\s*([Zz]{1})\s*([A-Z\d]{1})\b/g, '$1$2$3$4$5$6$7');
+
+    // 4. Normalize common label colons safely (preserving newlines and hyphens inside identifiers)
+    text = text.replace(/\b(GSTIN|GST|PO|INV|INVOICE|DATE|DUE|TOTAL|SUBTOTAL)[^\S\r\n]*[:：][^\S\r\n]*/gi, '$1: ');
+
+    // 5. Clean trailing spaces per line
+    text = text.split('\n').map((l) => l.trimEnd()).join('\n');
+
+    return text.trim();
   }
 
   /**
@@ -204,15 +232,25 @@ export class NormalizationHelper {
    */
   public static normalizeGSTIN(raw: string | null | undefined): string | null {
     if (!raw || typeof raw !== 'string') return null;
-    const clean = raw.toUpperCase().replace(/[^A-Z0-9]/g, '');
+    let clean = raw.toUpperCase().replace(/[^A-Z0-9]/g, '');
 
-    const match = clean.match(/\b\d{2}[A-Z]{5}\d{4}[A-Z]{1}[A-Z\d]{1}[Z]{1}[A-Z\d]{1}\b/);
-    if (match) {
-      return match[0];
+    // 1. Direct standard 15-character match
+    const directMatch = clean.match(/\b\d{2}[A-Z]{5}\d{4}[A-Z]{1}[A-Z\d]{1}[Z]{1}[A-Z\d]{1}\b/);
+    if (directMatch) {
+      return directMatch[0];
     }
 
-    if (clean.length === 15 && /^\d{2}[A-Z]{5}\d{4}[A-Z]{1}[A-Z\d]{1}[Z]{1}[A-Z\d]{1}$/.test(clean)) {
+    // 2. OCR Repair: Position 14 in Indian GSTIN is ALWAYS 'Z', but OCR engines frequently read 'Z' as '2'
+    if (clean.length === 15 && /^\d{2}[A-Z]{5}\d{4}[A-Z]{1}[A-Z\d]{1}[2Z]{1}[A-Z\d]{1}$/.test(clean)) {
+      clean = clean.substring(0, 13) + 'Z' + clean.substring(14);
       return clean;
+    }
+
+    const ocrMatch = clean.match(/\b\d{2}[A-Z]{5}\d{4}[A-Z]{1}[A-Z\d]{1}[2Z]{1}[A-Z\d]{1}\b/);
+    if (ocrMatch) {
+      let val = ocrMatch[0];
+      val = val.substring(0, 13) + 'Z' + val.substring(14);
+      return val;
     }
 
     return null;
