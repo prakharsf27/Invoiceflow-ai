@@ -236,19 +236,19 @@ export class DeterministicParserService {
     let discount = 0;
 
     // Line-anchored or summary patterns
-    const subtotalMatch = text.match(/(?:sub\s*total|subtotal|taxable\s*value|taxable\s*amount)[\s:]*(?:[\r\n]+\s*)?[^\d\s]*([\d,]+(?:\.\d+)?)/i);
+    const subtotalMatch = text.match(/(?:sub\s*total|subtotal|taxable\s*value|taxable\s*amount)[\s:]*(?:[\r\n]+\s*)*(?:[^\d\r\n]*?)?([\d,]+(?:\.\d+)?)/i);
     if (subtotalMatch) {
       subtotal = NormalizationHelper.normalizeAmount(subtotalMatch[1]);
     }
 
-    // Check for combined tax or split CGST + SGST (ignoring percentage rate like "GST 18%: ₹14,400")
-    const taxMatch = text.match(/(?:grand\s*tax|total\s*tax|tax\s*amount|total\s*gst|\btax\b|\bgst\b|\bigst\b)(?:\s*\(?\d+(?:\.\d+)?%\)?)?[\s:]*(?:[\r\n]+\s*)?[^\d\s]*([\d,]+(?:\.\d+)?)/i);
+    // Check for combined tax or split CGST + SGST (ignoring percentage rate like "GST @ 18%: ₹14,400")
+    const taxMatch = text.match(/(?:grand\s*tax|total\s*tax|tax\s*amount|total\s*gst|\btax\b|\bgst\b|\bigst\b)(?:\s*[@(@]?\s*\d+(?:\.\d+)?\s*%\)?)?[\s:]*(?:[\r\n]+\s*)*(?:[^\d\r\n]*?)?([\d,]+(?:\.\d+)?)/i);
     if (taxMatch) {
       tax = NormalizationHelper.normalizeAmount(taxMatch[1]);
     } else {
       // Check if CGST and SGST are on separate summary lines
-      const cgstMatch = text.match(/\bcgst(?:\s*\(?\d+(?:\.\d+)?%\)?)?[\s:]*(?:[\r\n]+\s*)?[^\d\s]*([\d,]+(?:\.\d+)?)/i);
-      const sgstMatch = text.match(/\bsgst(?:\s*\(?\d+(?:\.\d+)?%\)?)?[\s:]*(?:[\r\n]+\s*)?[^\d\s]*([\d,]+(?:\.\d+)?)/i);
+      const cgstMatch = text.match(/\bcgst(?:\s*[@(@]?\s*\d+(?:\.\d+)?\s*%\)?)?[\s:]*(?:[\r\n]+\s*)*(?:[^\d\r\n]*?)?([\d,]+(?:\.\d+)?)/i);
+      const sgstMatch = text.match(/\bsgst(?:\s*[@(@]?\s*\d+(?:\.\d+)?\s*%\)?)?[\s:]*(?:[\r\n]+\s*)*(?:[^\d\r\n]*?)?([\d,]+(?:\.\d+)?)/i);
       if (cgstMatch && sgstMatch) {
         const cgstAmt = NormalizationHelper.normalizeAmount(cgstMatch[1]) || 0;
         const sgstAmt = NormalizationHelper.normalizeAmount(sgstMatch[1]) || 0;
@@ -256,8 +256,8 @@ export class DeterministicParserService {
       }
     }
 
-    const totalMatch = text.match(/(?:grand\s*total|invoice\s*total|total\s*amount|total\s*payable|net\s*payable|payable\s*amount|amount\s*due|total\s*due|balance\s*due|final\s*amount)[\s:]*(?:[\r\n]+\s*)?[^\d\s]*([\d,]+(?:\.\d+)?)/i)
-      || text.match(/(?:^|\n)\s*(?:invoice\s*|total\s*)?(?:total|payable|amount)[\s:]*(?:[\r\n]+\s*)?[^\d\s]*([\d,]+(?:\.\d+)?)/i);
+    const totalMatch = text.match(/(?:grand\s*total|invoice\s*total|total\s*amount|total\s*payable|net\s*payable|payable\s*amount|amount\s*due|total\s*due|balance\s*due|final\s*amount)[\s:]*(?:[\r\n]+\s*)*(?:[^\d\r\n]*?)?([\d,]+(?:\.\d+)?)/i)
+      || text.match(/(?:^|\n)\s*(?:invoice\s*|total\s*)?(?:total|payable|amount)[\s:]*(?:[\r\n]+\s*)*(?:[^\d\r\n]*?)?([\d,]+(?:\.\d+)?)/i);
     if (totalMatch) {
       amount = NormalizationHelper.normalizeAmount(totalMatch[1]);
     }
@@ -280,7 +280,7 @@ export class DeterministicParserService {
       }
     }
 
-    const discountMatch = text.match(/(?:discount|less)[\s:]*(?:[\r\n]+\s*)?[^\d\s]*([\d,]+(?:\.\d+)?)/i);
+    const discountMatch = text.match(/(?:discount|less)[\s:]*(?:[\r\n]+\s*)*(?:[^\d\r\n]*?)?([\d,]+(?:\.\d+)?)/i);
     if (discountMatch) {
       discount = NormalizationHelper.normalizeAmount(discountMatch[1]) || 0;
     }
@@ -490,18 +490,32 @@ export class DeterministicParserService {
     let tax: number | null = null;
     let total: number | null = null;
 
-    const subMatch = text.match(/(?:sub\s*total|subtotal|taxable\s*amount)[\s:]*(?:[\r\n]+\s*)?[^\d\s]*([\d,]+(?:\.\d+)?)/i);
+    const subMatch = text.match(/(?:sub\s*total|subtotal|taxable\s*amount)[\s:]*(?:[\r\n]+\s*)*(?:[^\d\r\n]*?)?([\d,]+(?:\.\d+)?)/i);
     if (subMatch) {
       subtotal = NormalizationHelper.normalizeAmount(subMatch[1]);
     }
 
-    const taxMatch = text.match(/(?:tax|gst|igst|cgst\s*\+\s*sgst)[\s:]*(?:[\r\n]+\s*)?[^\d\s]*([\d,]+(?:\.\d+)?)/i);
+    // Tax amount: skip any percentage rate notation like '@18%' or '(18%)' before capturing the amount
+    const taxMatch = text.match(/(?:tax|gst|igst|cgst\s*\+\s*sgst)(?:\s*[@(@]?\s*\d+(?:\.\d+)?\s*%\)?)?[\s:]*(?:[\r\n]+\s*)*(?:[^\d\r\n]*?)?([\d,]+(?:\.\d+)?)/i);
     if (taxMatch) {
-      tax = NormalizationHelper.normalizeAmount(taxMatch[1]);
+      const candidate = NormalizationHelper.normalizeAmount(taxMatch[1]);
+      // Reject if the captured value looks like a percentage rate (< 100 and looks like a rate)
+      if (candidate !== null && candidate >= 100) {
+        tax = candidate;
+      } else if (candidate !== null && candidate < 100) {
+        // Could be a rate — try to find the actual tax amount on the same line
+        const sameLineMatch = taxMatch[0].match(/([\d,]{4,}(?:\.\d+)?)/);
+        if (sameLineMatch) {
+          const altVal = NormalizationHelper.normalizeAmount(sameLineMatch[1]);
+          if (altVal !== null && altVal >= 100) {
+            tax = altVal;
+          }
+        }
+      }
     }
 
-    const totalMatch = text.match(/(?:grand\s*total|po\s*total|order\s*total|total\s*amount)[\s:]*(?:[\r\n]+\s*)?[^\d\s]*([\d,]+(?:\.\d+)?)/i)
-      || text.match(/(?:^|\n)\s*(?:po\s*|order\s*)?total[\s:]*(?:[\r\n]+\s*)?[^\d\s]*([\d,]+(?:\.\d+)?)/i);
+    const totalMatch = text.match(/(?:grand\s*total|po\s*total|order\s*total|total\s*amount)[\s:]*(?:[\r\n]+\s*)*(?:[^\d\r\n]*?)?([\d,]+(?:\.\d+)?)/i)
+      || text.match(/(?:^|\n)\s*(?:po\s*|order\s*)?total[\s:]*(?:[\r\n]+\s*)*(?:[^\d\r\n]*?)?([\d,]+(?:\.\d+)?)/i);
     if (totalMatch) {
       total = NormalizationHelper.normalizeAmount(totalMatch[1]);
     }
@@ -529,6 +543,13 @@ export class DeterministicParserService {
     }
     if (total && tax && !subtotal) {
       subtotal = Math.round((total - tax) * 100) / 100;
+    }
+    // Derive tax from subtotal and total when tax was not extractable directly
+    if (subtotal && total && tax === null) {
+      const derivedTax = Math.round((total - subtotal) * 100) / 100;
+      if (derivedTax > 0 && derivedTax < total) {
+        tax = derivedTax;
+      }
     }
 
     // 6. Line Items

@@ -46,8 +46,8 @@ class HybridExtractionService {
   ): Promise<HybridExtractionResult<ExtractedInvoiceData | ExtractedPOData>> {
     const { documentId, originalFileName, docTypeHint, companyId, userId } = options;
 
-    console.log(`[DOC] ${originalFileName}`);
-    console.log(`[DOC] MIME: ${mimeType}`);
+    console.log(`[DOC] Processing: ${originalFileName}`);
+    console.log(`[DOC] MIME: ${mimeType}, size: ${fileBuffer.length} bytes`);
 
     let extractedText = '';
     let sourceMethod: 'pdf_text' | 'ocr' = 'pdf_text';
@@ -60,24 +60,34 @@ class HybridExtractionService {
     const isPdf = mimeType === 'application/pdf' || originalFileName.toLowerCase().endsWith('.pdf');
 
     if (isPdf) {
+      console.log(`[DOC] Extraction strategy: PDF_TEXT`);
       const pdfRes = await documentTextExtractionService.extractText(fileBuffer);
       if (pdfRes.success && !pdfRes.isScanned) {
         extractedText = pdfRes.text;
         isUsableText = true;
         sourceMethod = 'pdf_text';
         console.log(`[DOC] PDF text extraction: ${pdfRes.characterCount} chars (pages: ${pdfRes.pageCount || 1})`);
+        console.log(`[DOC] OCR required: false`);
       } else {
-        console.log(`[DOC] Minimal/unreadable PDF text detected (${pdfRes.characterCount} chars). Routing to local OCR.`);
+        console.log(`[DOC] PDF text extraction: insufficient (${pdfRes.characterCount} chars). Scanned/image PDF detected.`);
+        console.log(`[DOC] OCR required: true`);
       }
     }
 
     if (!isUsableText) {
+      if (!isPdf) {
+        console.log(`[DOC] Extraction strategy: OCR (raster image)`);
+      } else {
+        console.log(`[DOC] Extraction strategy: OCR (scanned PDF rasterization)`);
+      }
       const ocrRes = await ocrService.extractTextWithOCR(fileBuffer, mimeType);
       if (ocrRes.isUsable) {
         extractedText = ocrRes.text;
         isUsableText = true;
         sourceMethod = 'ocr';
-        console.log(`[DOC] Local OCR extraction: ${extractedText.length} chars (engine: ${ocrRes.engine})`);
+        console.log(`[DOC] OCR extraction: ${extractedText.length} chars (engine: ${ocrRes.engine}, confidence: ${ocrRes.confidence.toFixed(2)})`);
+      } else {
+        console.log(`[DOC] OCR extraction: not usable (engine: ${ocrRes.engine}). Routing to AI fallback.`);
       }
     }
 
@@ -105,10 +115,9 @@ class HybridExtractionService {
         const detResult = deterministicParserService.parsePOText(extractedText, sourceMethod);
 
         if (detResult.quality === 'high' && !detResult.needsAI) {
-          console.log(`[DOC] Local extraction: HIGH`);
-          console.log(`[DOC] AI required: NO`);
-          console.log(`[DOC] AI calls: 0`);
-          console.log(`[DOC] Local PO extracted: PO# "${detResult.data.poNumber}", Supplier: "${detResult.data.supplierName}", Total: ₹${detResult.data.total}`);
+          console.log(`[DOC] Deterministic extraction quality: HIGH`);
+          console.log(`[DOC] AI calls required: 0`);
+          console.log(`[DOC] PO extracted: PO# "${detResult.data.poNumber}", Supplier: "${detResult.data.supplierName}", Total: ₹${detResult.data.total}`);
 
           return {
             data: detResult.data,
@@ -123,17 +132,16 @@ class HybridExtractionService {
             aiCallsCount: 0,
           };
         } else {
-          console.log(`[DOC] Local PO extraction: ${detResult.quality.toUpperCase()} (missing critical: ${detResult.missingOrAmbiguousFields.join(', ')})`);
-          console.log(`[DOC] AI required: YES`);
+          console.log(`[DOC] Deterministic PO extraction: ${detResult.quality.toUpperCase()} (missing critical: ${detResult.missingOrAmbiguousFields.join(', ')})`);
+          console.log(`[DOC] AI calls required: 1`);
         }
       } else {
         const detResult = deterministicParserService.parseInvoiceText(extractedText, sourceMethod);
 
         if (detResult.quality === 'high' && !detResult.needsAI) {
-          console.log(`[DOC] Local extraction: HIGH`);
-          console.log(`[DOC] AI required: NO`);
-          console.log(`[DOC] AI calls: 0`);
-          console.log(`[DOC] Local Invoice extracted: Inv# "${detResult.data.invoiceNumber}", Supplier: "${detResult.data.supplierName}", Amount: ₹${detResult.data.amount}`);
+          console.log(`[DOC] Deterministic extraction quality: HIGH`);
+          console.log(`[DOC] AI calls required: 0`);
+          console.log(`[DOC] Invoice extracted: Inv# "${detResult.data.invoiceNumber}", Supplier: "${detResult.data.supplierName}", Amount: ₹${detResult.data.amount}`);
 
           return {
             data: detResult.data,
@@ -148,19 +156,22 @@ class HybridExtractionService {
             aiCallsCount: 0,
           };
         } else {
-          console.log(`[DOC] Local Invoice extraction: ${detResult.quality.toUpperCase()} (missing critical: ${detResult.missingOrAmbiguousFields.join(', ')})`);
-          console.log(`[DOC] AI required: YES`);
+          console.log(`[DOC] Deterministic invoice extraction: ${detResult.quality.toUpperCase()} (missing critical: ${detResult.missingOrAmbiguousFields.join(', ')})`);
+          console.log(`[DOC] AI calls required: 1`);
         }
       }
     } else {
-      console.log(`[DOC] Local extraction: UNREADABLE / NO LOCAL TEXT`);
-      console.log(`[DOC] AI required: YES`);
+      console.log(`[DOC] Deterministic extraction: UNREADABLE / NO TEXT`);
+      console.log(`[DOC] Extraction strategy: AI`);
+      console.log(`[DOC] AI calls required: 1`);
     }
 
     // -------------------------------------------------------------
-    // Step 4: Selective AI Fallback (1 Gemini attempt -> Immediate Groq fallback)
+    // Step 4: Selective AI Fallback (1 Gemini attempt -> Immediate Groq fallback on 429/failure)
+    // Gemini: 1 attempt max. Groq: 1 attempt max. No retry storm.
     // -------------------------------------------------------------
     aiCallsCount = 1;
+    console.log(`[AI] Gemini attempt: 1/1`);
 
     if (detectedType === 'purchase_order') {
       const aiRes = await aiExtractionService.extractPODocument(fileBuffer, mimeType, {
@@ -179,6 +190,7 @@ class HybridExtractionService {
 
       console.log(`[DOC] Final extraction quality: ${qualityCheck.quality.toUpperCase()} (AI model: ${aiRes.model})`);
       console.log(`[DOC] AI calls: 1`);
+      console.log(`[AI] AI extraction validated successfully (PO)`);
 
       return {
         data: mergedData,
@@ -210,6 +222,7 @@ class HybridExtractionService {
 
       console.log(`[DOC] Final extraction quality: ${qualityCheck.quality.toUpperCase()} (AI model: ${aiRes.model})`);
       console.log(`[DOC] AI calls: 1`);
+      console.log(`[AI] AI extraction validated successfully (Invoice)`);
 
       return {
         data: mergedData,

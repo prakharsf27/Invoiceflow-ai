@@ -99,7 +99,12 @@ class CentralizedAIService {
         return result;
       } catch (geminiErr: any) {
         const errMsg = geminiErr?.message || String(geminiErr);
-        console.warn(`[AI] Gemini attempt 1 failed (${errMsg}). Immediate fallback to Groq...`);
+        const isQuota = /429|resource_exhausted|quota/i.test(errMsg);
+        if (isQuota) {
+          console.warn(`[AI] Gemini quota exceeded; no retry. Falling back to Groq.`);
+        } else {
+          console.warn(`[AI] Gemini attempt 1 failed (${errMsg.slice(0, 120)}). Falling back to Groq.`);
+        }
       }
     } else {
       console.log(`[AI] Gemini not configured. Using Groq fallback directly...`);
@@ -107,15 +112,15 @@ class CentralizedAIService {
 
     // 2. Attempt Fallback Provider: Groq (Max 1 attempt)
     if (groqProvider.isConfigured()) {
-      console.log(`[AI] Falling back to Groq (operation: ${operationName}, maxAttempts: 1)...`);
+      console.log(`[AI] Falling back to Groq (operation: ${operationName})...`);
       try {
         const result = await aiQueue.enqueue(() => groqOp());
-        console.log(`[AI] Groq fallback attempt 1 succeeded (${result.model})`);
+        console.log(`[AI] Groq attempt 1 succeeded (${result.model})`);
         return result;
       } catch (groqErr: any) {
         const groqMsg = groqErr?.message || String(groqErr);
         console.error(`[AI] Groq fallback attempt 1 failed: ${groqMsg}`);
-        throw new Error(`AI processing unavailable. Both Gemini and Groq attempts failed. (${groqMsg})`);
+        throw new Error(`AI processing unavailable. Both Gemini and Groq failed. (${groqMsg})`);
       }
     }
 

@@ -6,6 +6,13 @@
  * - Respects the provider's Retry-After header or error message delay hint
  * - Does NOT retry permanent errors (bad API key, invalid argument)
  * - Caps maximum wait at 30 seconds per attempt to avoid indefinite stalls
+ *
+ * IMPORTANT — Document Extraction Path:
+ * withAIRetry is NOT used for document extraction or PO analysis.
+ * For extraction: aiService.ts executeWithFallback() enforces exactly:
+ *   - 1 Gemini attempt (no retry on 429/quota exceeded)
+ *   - 1 Groq fallback attempt (on any Gemini failure)
+ * This function is reserved for other one-off AI operations that may need limited retries.
  */
 
 import { isRetryableAIError } from './types.js';
