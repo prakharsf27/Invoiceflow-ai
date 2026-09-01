@@ -16,6 +16,7 @@ export interface ExtractedInvoiceData {
   currency: string;
   subtotal: number | null;
   tax: number | null;
+  taxRate?: number | null;
   discount: number;
   amount: number | null;
   paymentTerms: string | null;
@@ -193,6 +194,7 @@ class AIExtractionService {
       currency: extractString(parsed.currency) || 'INR',
       subtotal,
       tax,
+      taxRate: extractNumber(parsed.taxRate),
       discount: extractNumber(parsed.discount) || 0,
       amount,
       paymentTerms: extractString(parsed.paymentTerms) || null,

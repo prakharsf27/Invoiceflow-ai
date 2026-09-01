@@ -354,12 +354,53 @@ export class ExtractionQualityEvaluator {
       }
     }
 
-    // 9. Financial Reconciliation Check
+    // 9. Independent Validation: Tax Amount & Tax Rate
     const subtotal = data.subtotal ?? null;
     const tax = data.tax ?? null;
     const discount = data.discount ?? 0;
     const total = data.amount ?? 0;
 
+    let lineItemsTaxSum = 0;
+    if (rawItems.length > 0) {
+      for (const it of rawItems) {
+        if (typeof it.taxAmount === 'number' && it.taxAmount > 0) {
+          lineItemsTaxSum += it.taxAmount;
+        } else if (typeof it.taxRate === 'number' && it.taxRate > 0 && typeof it.quantity === 'number' && typeof it.unitPrice === 'number') {
+          lineItemsTaxSum += (it.quantity * it.unitPrice * it.taxRate) / 100;
+        }
+      }
+      lineItemsTaxSum = Math.round(lineItemsTaxSum * 100) / 100;
+    }
+
+    if (tax !== null) {
+      // Guard against percentage rate confused as currency amount (e.g. 18 on 100,000 subtotal)
+      if (tax < 50 && subtotal !== null && subtotal > 500) {
+        failedFields.push('tax');
+        missingCriticalFields.push('tax');
+        fieldValidationStatus.tax = {
+          status: 'invalid',
+          detail: 'Tax amount appears to be a percentage rate rather than a monetary currency amount.',
+        };
+        warnings.push(`Extracted tax (${tax}) appears to be a percentage rather than monetary amount.`);
+        validationErrors.push('Tax amount appears to be a percentage rate rather than a monetary currency amount.');
+      } else if (lineItemsTaxSum > 0 && Math.abs(tax - lineItemsTaxSum) > 5.0) {
+        // Conflict between extracted header tax and line-item tax sum
+        failedFields.push('tax');
+        missingCriticalFields.push('tax');
+        fieldValidationStatus.tax = {
+          status: 'invalid',
+          detail: `Extracted header tax (₹${tax}) conflicts with line-item tax sum (₹${lineItemsTaxSum}).`,
+        };
+        warnings.push(`Tax conflict: header tax (₹${tax}) conflicts with line-item tax sum (₹${lineItemsTaxSum}).`);
+        validationErrors.push(`Tax conflict: header tax (₹${tax}) conflicts with line-item tax sum (₹${lineItemsTaxSum}).`);
+      } else {
+        fieldValidationStatus.tax = { status: 'valid' };
+      }
+    } else {
+      fieldValidationStatus.tax = { status: 'missing' };
+    }
+
+    // 10. Financial Reconciliation Check
     let subtotalPlusTaxEqualsTotal = true;
     let discrepancyVariance = 0;
     const discrepancyDetails: string[] = [];
@@ -377,7 +418,7 @@ export class ExtractionQualityEvaluator {
       }
     }
 
-    // 10. Determine Quality & AI Fallback Requirement
+    // 11. Determine Quality & AI Fallback Requirement
     let quality: 'high' | 'incomplete' | 'ambiguous' = 'high';
     let needsAiFallback = false;
 

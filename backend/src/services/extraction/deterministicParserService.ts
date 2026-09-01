@@ -334,51 +334,17 @@ export class DeterministicParserService {
     // 8. Currency Extraction
     const currency = NormalizationHelper.normalizeCurrency(text);
 
-    // 9. Financial Amounts (Subtotal, Tax, Total, Discount)
+    // 9. Financial Amounts (Subtotal, Tax, TaxRate, Total, Discount)
     let subtotal: number | null = null;
     let tax: number | null = null;
+    let taxRate: number | null = null;
     let amount: number | null = null;
     let discount = 0;
 
-    // Line-anchored or summary patterns
+    // 9a. Subtotal extraction
     const subtotalMatch = text.match(/(?:sub\s*total|subtotal|taxable\s*value|taxable\s*amount)[\s:]*(?:[\r\n]+\s*)*(?:[^\d\r\n]*?)?([\d,]+(?:\.\d+)?)/i);
     if (subtotalMatch) {
       subtotal = NormalizationHelper.normalizeAmount(subtotalMatch[1]);
-    }
-
-    // Summary-anchored tax patterns (strictly excluding line-item "Tax Rate: 18%" or header "TAX INVOICE")
-    const summaryTaxPatterns = [
-      /(?:grand\s*tax|total\s*tax|tax\s*amount|total\s*gst|total\s*igst)[\s:]*(?:[^\d\r\n]*?)?([0-9,]+(?:\.[0-9]+)?)/i,
-      /(?:gst|igst|\btax\b)(?:\s*[@(@]?\s*[0-9]+(?:\.[0-9]+)?\s*%\)?)[\s:]*(?:[^\d\r\n]*?)?([0-9,]+(?:\.[0-9]+)?)/i,
-      /(?:^|\n)[^\S\r\n]*(?:gst|igst|\btax\b)(?!\s*(?:invoice|rate|id|number|no|code|amount|breakdown))[:\s]*([0-9,]+(?:\.[0-9]+)?)/i,
-    ];
-
-    for (const pat of summaryTaxPatterns) {
-      const match = text.match(pat);
-      if (match) {
-        const parsedCandidate = NormalizationHelper.normalizeAmount(match[1]);
-        if (parsedCandidate !== null) {
-          tax = parsedCandidate;
-          break;
-        }
-      }
-    }
-
-    if (tax === null) {
-      // Check if CGST and SGST are on separate summary lines
-      const cgstMatch = text.match(/\bcgst(?:\s*[@(@]?\s*\d+(?:\.\d+)?\s*%\)?)?[\s:]*(?:[\r\n]+\s*)*(?:[^\d\r\n]*?)?([\d,]+(?:\.\d+)?)/i);
-      const sgstMatch = text.match(/\bsgst(?:\s*[@(@]?\s*\d+(?:\.\d+)?\s*%\)?)?[\s:]*(?:[\r\n]+\s*)*(?:[^\d\r\n]*?)?([\d,]+(?:\.\d+)?)/i);
-      if (cgstMatch && sgstMatch) {
-        const cgstAmt = NormalizationHelper.normalizeAmount(cgstMatch[1]) || 0;
-        const sgstAmt = NormalizationHelper.normalizeAmount(sgstMatch[1]) || 0;
-        tax = Math.round((cgstAmt + sgstAmt) * 100) / 100;
-      }
-    }
-
-    const totalMatch = text.match(/(?:grand\s*total|invoice\s*total|total\s*amount|total\s*payable|net\s*payable|payable\s*amount|amount\s*due|total\s*due|balance\s*due|final\s*amount)[\s:]*(?:[\r\n]+\s*)*(?:[^\d\r\n]*?)?([\d,]+(?:\.\d+)?)/i)
-      || text.match(/(?:^|\n)\s*(?:invoice\s*|total\s*)?(?:total|payable|amount)[\s:]*(?:[\r\n]+\s*)*(?:[^\d\r\n]*?)?([\d,]+(?:\.\d+)?)/i);
-    if (totalMatch) {
-      amount = NormalizationHelper.normalizeAmount(totalMatch[1]);
     }
 
     // Multiline fallback for subtotal
@@ -402,28 +368,14 @@ export class DeterministicParserService {
       }
     }
 
-    // Multiline fallback for tax
-    if (!tax) {
-      for (let i = 0; i < lines.length - 1; i++) {
-        const l = lines[i];
-        if (/^(?:grand\s*tax|total\s*tax|tax\s*amount|total\s*gst|tax|gst|igst|cgst\s*\+\s*sgst)(?:\s*[@(@]?\s*\d+(?:\.\d+)?\s*%\)?)?[:\s]*$/i.test(l)) {
-          for (let j = i + 1; j < lines.length && j < i + 4; j++) {
-            const next = lines[j].trim();
-            const numMatch = next.match(/[\d,]+(?:\.\d+)?/);
-            if (numMatch) {
-              const parsedTax = NormalizationHelper.normalizeAmount(numMatch[0]);
-              if (parsedTax && parsedTax > 0) {
-                tax = parsedTax;
-                break;
-              }
-            }
-          }
-          if (tax) break;
-        }
-      }
+    // 9b. Total / Amount extraction
+    const totalMatch = text.match(/(?:grand\s*total|invoice\s*total|total\s*amount|total\s*payable|net\s*payable|payable\s*amount|amount\s*due|total\s*due|balance\s*due|final\s*amount)[\s:]*(?:[\r\n]+\s*)*(?:[^\d\r\n]*?)?([\d,]+(?:\.\d+)?)/i)
+      || text.match(/(?:^|\n)\s*(?:invoice\s*|total\s*)?(?:total|payable|amount)[\s:]*(?:[\r\n]+\s*)*(?:[^\d\r\n]*?)?([\d,]+(?:\.\d+)?)/i);
+    if (totalMatch) {
+      amount = NormalizationHelper.normalizeAmount(totalMatch[1]);
     }
 
-    // Multiline fallback: "Total Amount" on line i, "₹1,25,000" on line i+1
+    // Multiline fallback for total
     if (!amount) {
       for (let i = 0; i < lines.length - 1; i++) {
         const l = lines[i];
@@ -444,30 +396,197 @@ export class DeterministicParserService {
       }
     }
 
+    // 9c. Discount extraction
     const discountMatch = text.match(/(?:discount|less)[\s:]*(?:[\r\n]+\s*)*(?:[^\d\r\n]*?)?([\d,]+(?:\.\d+)?)/i);
     if (discountMatch) {
       discount = NormalizationHelper.normalizeAmount(discountMatch[1]) || 0;
     }
 
-    // Math consistency resolution
-    if (subtotal && amount) {
-      const expectedTax = Math.round((amount - subtotal + discount) * 100) / 100;
-      // If tax was parsed as a rate (< 100) on a large subtotal, resolve to exact currency amount
-      if (tax !== null && tax < 100 && subtotal > 500 && Math.abs(expectedTax - tax) > 5) {
-        if (Math.abs(Math.round((subtotal * tax / 100) * 100) / 100 - expectedTax) < 5) {
-          tax = expectedTax;
+    // 9d. Line Items Parsing (parsed early to provide corroborating evidence)
+    const lineItems = this.extractLineItems(text);
+
+    // Calculate line-item tax sum and line-item tax rate candidate
+    let lineItemTaxSum = 0;
+    let lineItemTaxRateCandidate: number | null = null;
+    if (lineItems.length > 0) {
+      for (const it of lineItems) {
+        if (typeof it.taxAmount === 'number' && it.taxAmount > 0) {
+          lineItemTaxSum += it.taxAmount;
+        } else if (typeof it.taxRate === 'number' && it.taxRate > 0 && typeof it.quantity === 'number' && typeof it.unitPrice === 'number') {
+          lineItemTaxSum += (it.quantity * it.unitPrice * it.taxRate) / 100;
+        }
+        if (typeof it.taxRate === 'number' && it.taxRate > 0 && lineItemTaxRateCandidate === null) {
+          lineItemTaxRateCandidate = it.taxRate;
         }
       }
-      if (tax === null && expectedTax >= 0 && expectedTax < amount) {
-        tax = expectedTax;
+      lineItemTaxSum = Math.round(lineItemTaxSum * 100) / 100;
+    }
+
+    // 9e. Header Tax and Tax Rate Extraction (Strictly separating percentage rate vs monetary currency amount)
+
+    // Pattern 1: Explicit CGST and SGST summary lines
+    const cgstMatch = text.match(/\bcgst(?:\s*[@(@]?\s*(\d+(?:\.\d+)?)\s*%\)?)?[\s:]*(?:[\r\n]+\s*)*(?:(?:rs\.?|inr|₹)\s*)?([\d,]+(?:\.\d+)?)/i);
+    const sgstMatch = text.match(/\bsgst(?:\s*[@(@]?\s*(\d+(?:\.\d+)?)\s*%\)?)?[\s:]*(?:[\r\n]+\s*)*(?:(?:rs\.?|inr|₹)\s*)?([\d,]+(?:\.\d+)?)/i);
+    if (cgstMatch && sgstMatch) {
+      const cgstRate = cgstMatch[1] ? parseFloat(cgstMatch[1]) : null;
+      const sgstRate = sgstMatch[1] ? parseFloat(sgstMatch[1]) : null;
+      if (cgstRate !== null && sgstRate !== null) {
+        taxRate = cgstRate + sgstRate;
+      }
+      const cgstAmt = NormalizationHelper.normalizeAmount(cgstMatch[2]) || 0;
+      const sgstAmt = NormalizationHelper.normalizeAmount(sgstMatch[2]) || 0;
+      if (cgstAmt > 0 || sgstAmt > 0) {
+        tax = Math.round((cgstAmt + sgstAmt) * 100) / 100;
       }
     }
 
-    if (subtotal && tax && !amount) {
+    // Pattern 2: Combined Rate + Amount near each other (e.g. "GST @ 18%: Rs. 18,000.00", "GST (18%): ₹18,000", "Tax: 18% ₹18,000")
+    if (tax === null) {
+      const combinedTaxRateAndAmountRegexes = [
+        /\b(?:gst|igst|tax)\b\s*[@(@]?\s*(\d+(?:\.\d+)?)\s*%\)?[\s:]+(?:(?:rs\.?|inr|₹)\s*)?([\d,]+(?:\.\d+)?)/i,
+        /\b(?:gst|igst|tax)\b[\s:]+\s*(\d+(?:\.\d+)?)\s*%\s*(?:(?:rs\.?|inr|₹)\s*)?([\d,]+(?:\.\d+)?)/i,
+        /\b(?:gst|igst|tax)\b\s*\((\d+(?:\.\d+)?)\s*%\)[\s:]*(?:(?:rs\.?|inr|₹)\s*)?([\d,]+(?:\.\d+)?)/i,
+      ];
+
+      for (const pat of combinedTaxRateAndAmountRegexes) {
+        const m = text.match(pat);
+        if (m) {
+          const rateVal = parseFloat(m[1]);
+          const amtVal = NormalizationHelper.normalizeAmount(m[2]);
+          if (!isNaN(rateVal) && rateVal > 0) {
+            taxRate = rateVal;
+          }
+          if (amtVal !== null && amtVal > 0) {
+            tax = amtVal;
+            break;
+          }
+        }
+      }
+    }
+
+    // Pattern 3: Explicit Monetary Tax Amount labels (e.g. "Tax Amount: 18,000", "Total GST: 18,000", "Grand Tax: 18,000")
+    if (tax === null) {
+      const explicitAmtMatch = text.match(/(?:grand\s*tax|total\s*tax|tax\s*amount|total\s*gst|total\s*igst)[\s:]*(?:[\r\n]+\s*)*(?:(?:rs\.?|inr|₹)\s*)?([\d,]+(?:\.\d+)?)/i);
+      if (explicitAmtMatch) {
+        const parsed = NormalizationHelper.normalizeAmount(explicitAmtMatch[1]);
+        if (parsed !== null && parsed > 0) {
+          tax = parsed;
+        }
+      }
+    }
+
+    // Pattern 4: Standard summary "GST: ₹18,000" or "Tax: 18,000" (Rejecting percentage tokens!)
+    if (tax === null) {
+      const standardSummaryMatch = text.match(/(?:^|\n)[^\S\r\n]*(?:gst|igst|\btax\b)(?!\s*(?:invoice|rate|id|number|no|code|amount|breakdown))[:\s]*(?:(?:rs\.?|inr|₹)\s*)?([\d,]+(?:\.\d+)?)(%?)/i);
+      if (standardSummaryMatch) {
+        const hasPercent = standardSummaryMatch[2] === '%' || standardSummaryMatch[0].includes('%');
+        const numVal = NormalizationHelper.normalizeAmount(standardSummaryMatch[1]);
+        if (hasPercent) {
+          // It is a percentage rate, NEVER a monetary currency amount!
+          if (numVal !== null && numVal > 0) {
+            taxRate = numVal;
+          }
+        } else if (numVal !== null) {
+          // If subtotal is known and large, but numVal is <= 50 (e.g. 18, 12, 5, 28) and matches a standard rate:
+          if (subtotal && subtotal >= 500 && numVal <= 50 && [5, 9, 12, 18, 20, 21, 28].includes(numVal)) {
+            taxRate = numVal;
+          } else {
+            tax = numVal;
+          }
+        }
+      }
+    }
+
+    // Pattern 5: Multi-line scanning for tax header
+    if (!tax) {
+      for (let i = 0; i < lines.length - 1; i++) {
+        const l = lines[i];
+        if (/^(?:grand\s*tax|total\s*tax|tax\s*amount|total\s*gst|tax|gst|igst|cgst\s*\+\s*sgst)(?:\s*[@(@]?\s*\d+(?:\.\d+)?\s*%\)?)?[:\s]*$/i.test(l)) {
+          for (let j = i + 1; j < lines.length && j < i + 4; j++) {
+            const next = lines[j].trim();
+            const hasPct = next.includes('%');
+            const numMatch = next.match(/[\d,]+(?:\.\d+)?/);
+            if (numMatch) {
+              const parsedVal = NormalizationHelper.normalizeAmount(numMatch[0]);
+              if (parsedVal && parsedVal > 0) {
+                if (hasPct || (subtotal && subtotal >= 500 && parsedVal <= 50 && [5, 9, 12, 18, 20, 21, 28].includes(parsedVal))) {
+                  taxRate = parsedVal;
+                } else {
+                  tax = parsedVal;
+                  break;
+                }
+              }
+            }
+          }
+          if (tax) break;
+        }
+      }
+    }
+
+    // Pattern 6: Standalone Tax Rate pattern if taxRate is still missing (e.g. "Tax Rate: 18%", "GST Rate: 18%")
+    if (taxRate === null) {
+      const standaloneRateMatch = text.match(/(?:tax\s*rate|gst\s*rate|gst\s*%)[\s:]*(\d+(?:\.\d+)?)\s*%?/i);
+      if (standaloneRateMatch) {
+        taxRate = parseFloat(standaloneRateMatch[1]);
+      } else if (lineItemTaxRateCandidate !== null) {
+        taxRate = lineItemTaxRateCandidate;
+      }
+    }
+
+    // 9f. Line-Item Corroboration & Tax Reconciliation
+    if (tax !== null && lineItemTaxSum > 0) {
+      const taxVarianceWithLineItems = Math.abs(tax - lineItemTaxSum);
+      if (taxVarianceWithLineItems > 5.0) {
+        // Header tax conflicts with line-item tax sum!
+        // Check if lineItemTaxSum reconciles with subtotal + tax = total
+        if (subtotal !== null && amount !== null) {
+          const expectedTaxFromTotal = Math.round((amount - subtotal + discount) * 100) / 100;
+          if (Math.abs(lineItemTaxSum - expectedTaxFromTotal) <= 2.0) {
+            // Line items corroborate the exact expected tax from total!
+            tax = lineItemTaxSum;
+          }
+        }
+      }
+    } else if (tax === null && lineItemTaxSum > 0) {
+      // Header tax was absent or only given as a rate; corroborate directly from line items!
+      tax = lineItemTaxSum;
+    }
+
+    // 9g. Subtotal + Tax = Total Mathematical Consistency
+    if (subtotal !== null && amount !== null) {
+      const expectedTax = Math.round((amount - subtotal + discount) * 100) / 100;
+      if (tax === null && expectedTax >= 0) {
+        tax = expectedTax;
+      } else if (tax !== null) {
+        // If tax was wrongly parsed as rate (e.g. 18 on a 100,000 subtotal):
+        if (tax < 100 && subtotal > 500 && Math.abs(expectedTax - tax) > 5) {
+          if (Math.abs(Math.round((subtotal * (tax / 100)) * 100) / 100 - expectedTax) <= 5) {
+            if (taxRate === null) taxRate = tax;
+            tax = expectedTax;
+          }
+        }
+      }
+    }
+
+    if (subtotal !== null && tax !== null && !amount) {
       amount = Math.round((subtotal + tax - discount) * 100) / 100;
     }
-    if (amount && tax && !subtotal) {
+    if (amount !== null && tax !== null && !subtotal) {
       subtotal = Math.round((amount - tax + discount) * 100) / 100;
+    }
+
+    // 9h. Inferred Tax Rate
+    if (taxRate === null && subtotal && tax && subtotal > 0 && tax > 0) {
+      const inferred = Math.round((tax / subtotal) * 100 * 100) / 100;
+      for (const stdRate of [0, 5, 9, 12, 18, 20, 21, 28]) {
+        if (Math.abs(inferred - stdRate) <= 0.5) {
+          taxRate = stdRate;
+          break;
+        }
+      }
+      if (taxRate === null) {
+        taxRate = inferred;
+      }
     }
 
     // 10. Bank Details (Strictly null if absent — never invent or use defaults)
@@ -489,9 +608,6 @@ export class DeterministicParserService {
       };
     }
 
-    // 11. Line Items Parsing
-    const lineItems = this.extractLineItems(text);
-
     // Initial preliminary data structure
     const data: ExtractedInvoiceData = {
       documentType: 'invoice',
@@ -507,6 +623,7 @@ export class DeterministicParserService {
       currency,
       subtotal: subtotal ?? null,
       tax: tax ?? null,
+      taxRate: taxRate ?? null,
       discount,
       amount: amount ?? 0,
       paymentTerms: paymentTerms || null,

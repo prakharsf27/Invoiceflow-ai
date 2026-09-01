@@ -177,30 +177,42 @@ Total:
   assert(res3.data.subtotal === 100000, 'Scenario 3: Subtotal is 100000');
   assert(res3.data.tax === 18000, 'Scenario 3: Tax is 18000');
   assert(res3.data.amount === 118000, 'Scenario 3: Total is 118000');
+  assert(res3.data.taxRate === 18, 'Scenario 3: Tax Rate is 18%');
   assert(res3.quality === 'high', 'Scenario 3: Extraction quality is high with 0 AI calls');
 
   // -------------------------------------------------------------
-  // Scenario 4: JPG Screenshot Format
+  // Scenario 4: JPG Screenshot Format (INV-TEST-021 Exact Layout)
   // -------------------------------------------------------------
-  console.log('\n--- Scenario 4: JPG Screenshot Format ---');
+  console.log('\n--- Scenario 4: JPG Screenshot Format (INV-TEST-021) ---');
   const jpgScreenshotText = `
-Seller: Apex Cloud Solutions Pvt. Ltd.
-GST: 27AAECA1234F1Z5
-Bill No: INV-TEST-020
-Dated: 01-09-2026
-Purchase Order No: PO-2026-TEST-001
+DataCore Industrial Supplies Pvt Ltd
+GSTIN: 29AAFCA8912J1ZQ
+Invoice Number: INV-TEST-021
+Invoice Date: 2026-09-21
+Due Date: 2026-10-21
+PO: PO-2026-TEST-002
 
-1. Cloud Infrastructure Services Qty: 10 Unit Price: 10000 Tax: 18% Total: 118000
-Taxable: 100000
-IGST: 18000
-Grand Total: 118000
+Line item:
+Industrial Control Server Nodes
+Qty: 11
+Unit Price: ₹10,000
+Tax: 18%
+Total: ₹1,29,800
+
+Subtotal: ₹1,10,000
+GST @ 18%: ₹19,800
+Total Amount: ₹1,29,800
 `;
   const res4 = deterministicParserService.parseInvoiceText(jpgScreenshotText, 'ocr');
-  assert(res4.data.supplierName === 'Apex Cloud Solutions Pvt. Ltd.', 'Scenario 4: Supplier parsed from JPG');
-  assert(res4.data.invoiceNumber === 'INV-TEST-020', 'Scenario 4: Bill No parsed');
-  assert(res4.data.invoiceDate === '2026-09-01', 'Scenario 4: Date parsed as 2026-09-01');
-  assert(res4.data.poNumber === 'PO-2026-TEST-001', 'Scenario 4: PO parsed');
-  assert(res4.data.lineItems.length === 1, 'Scenario 4: Line item parsed from single line key-value');
+  assert(res4.data.supplierName === 'DataCore Industrial Supplies Pvt Ltd', 'Scenario 4: Supplier is DataCore Industrial Supplies Pvt Ltd');
+  assert(res4.data.invoiceNumber === 'INV-TEST-021', 'Scenario 4: Invoice Number is INV-TEST-021');
+  assert(res4.data.invoiceDate === '2026-09-21', 'Scenario 4: Date parsed as 2026-09-21');
+  assert(res4.data.poNumber === 'PO-2026-TEST-002', 'Scenario 4: PO parsed as PO-2026-TEST-002');
+  assert(res4.data.subtotal === 110000, 'Scenario 4: Subtotal is 110000');
+  assert(res4.data.tax === 19800, 'Scenario 4: Tax is 19800');
+  assert(res4.data.amount === 129800, 'Scenario 4: Total is 129800');
+  assert(res4.data.taxRate === 18, 'Scenario 4: Tax Rate is 18%');
+  assert(res4.data.lineItems.length === 1, 'Scenario 4: 1 Line item parsed');
   assert(res4.quality === 'high', 'Scenario 4: High quality');
 
   // -------------------------------------------------------------
