@@ -8,10 +8,9 @@ export class GeminiProvider implements AIProvider {
   private currentKey: string | null = null;
   private modelFallbackQueue = [
     process.env.GEMINI_MODEL || DEFAULT_GEMINI_MODEL,
-    'gemini-3.6-flash',
     'gemini-2.5-flash',
-    'gemini-flash-latest',
-    'gemini-flash-lite-latest',
+    'gemini-2.0-flash',
+    'gemini-1.5-flash',
   ];
 
   public isConfigured(): boolean {
@@ -115,12 +114,19 @@ export class GeminiProvider implements AIProvider {
           model: modelName,
           contents: [
             {
-              inlineData: {
-                mimeType,
-                data: base64Data,
-              },
+              role: 'user',
+              parts: [
+                {
+                  inlineData: {
+                    mimeType,
+                    data: base64Data,
+                  },
+                },
+                {
+                  text: userPromptText,
+                },
+              ],
             },
-            userPromptText,
           ],
           config: {
             systemInstruction: systemInst,

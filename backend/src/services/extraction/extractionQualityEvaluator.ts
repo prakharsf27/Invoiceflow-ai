@@ -302,25 +302,24 @@ export class ExtractionQualityEvaluator {
     const missingFields: string[] = [];
     const warnings: string[] = [];
 
-    // 1. CRITICAL Header Fields Evaluation
-    if (!data.poNumber || data.poNumber.trim().length < 2 || /^(?:unknown|null|n\/a|po|purchase\s*order)$/i.test(data.poNumber.trim())) {
-      missingCriticalFields.push('poNumber');
-      missingFields.push('poNumber');
-    }
+    // 1. CRITICAL Header Fields Evaluation for PO
+    // Primary Critical: supplierName, total (> 0)
     if (!data.supplierName || data.supplierName.trim().length < 3 || /^(?:unknown|null|n\/a|supplier|vendor|seller)$/i.test(data.supplierName.trim())) {
       missingCriticalFields.push('supplierName');
       missingFields.push('supplierName');
-    }
-    if (!data.poDate || !/^\d{4}-\d{2}-\d{2}$/.test(data.poDate)) {
-      missingCriticalFields.push('poDate');
-      missingFields.push('poDate');
     }
     if (data.total === null || data.total === undefined || typeof data.total !== 'number' || isNaN(data.total) || data.total <= 0) {
       missingCriticalFields.push('total');
       missingFields.push('total');
     }
 
-    // 2. OPTIONAL Fields Tracking
+    // 2. Track PO Number, Date, Buyer & Optional Fields
+    if (!data.poNumber || data.poNumber.trim().length < 2 || /^(?:unknown|null|n\/a|po|purchase\s*order)$/i.test(data.poNumber.trim())) {
+      missingFields.push('poNumber');
+    }
+    if (!data.poDate || !/^\d{4}-\d{2}-\d{2}$/.test(data.poDate)) {
+      missingFields.push('poDate');
+    }
     if (!data.buyerName) missingFields.push('buyerName');
     if (!data.supplierGstin) missingFields.push('supplierGstin');
 
@@ -362,6 +361,9 @@ export class ExtractionQualityEvaluator {
     } else if (!subtotalPlusTaxEqualsTotal && discrepancyVariance > 50) {
       quality = 'ambiguous';
       needsAiFallback = true;
+    } else if (missingFields.includes('poNumber')) {
+      quality = 'incomplete';
+      needsAiFallback = false;
     } else {
       quality = 'high';
       needsAiFallback = false;

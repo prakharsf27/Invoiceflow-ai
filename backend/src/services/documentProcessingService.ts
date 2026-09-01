@@ -478,10 +478,10 @@ class DocumentProcessingService {
         }
       }
 
-      // Evaluate whether critical fields are present
+      // Evaluate whether critical fields are present (missing PO/Inv number alone does not cause total failure)
       const isCriticalMissing = (docType === 'purchase_order')
-        ? (!extractedPayload.poNumber || !extractedPayload.total || extractedPayload.total <= 0)
-        : (!extractedPayload.invoiceNumber || !extractedPayload.amount || extractedPayload.amount <= 0);
+        ? (!extractedPayload.total || extractedPayload.total <= 0 || !extractedPayload.supplierName)
+        : (!extractedPayload.amount || extractedPayload.amount <= 0 || !extractedPayload.supplierName);
 
       const isFailedExtraction = extractionResult.quality === 'incomplete' && isCriticalMissing;
 

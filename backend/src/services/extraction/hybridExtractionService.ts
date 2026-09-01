@@ -92,15 +92,21 @@ class HybridExtractionService {
     }
 
     // -------------------------------------------------------------
-    // Step 2: Determine Document Type
+    // Step 2: Determine Document Type (Text ground truth takes priority)
     // -------------------------------------------------------------
-    let detectedType: DocumentType = (docTypeHint && docTypeHint !== 'unknown')
-      ? docTypeHint
-      : 'unknown';
+    let detectedType: DocumentType = 'unknown';
 
-    if (detectedType === 'unknown' && isUsableText) {
-      detectedType = deterministicParserService.detectDocumentTypeFromText(extractedText);
-      console.log(`[DOC] Detected document type: ${detectedType}`);
+    if (isUsableText) {
+      const typeFromText = deterministicParserService.detectDocumentTypeFromText(extractedText);
+      if (typeFromText !== 'unknown') {
+        detectedType = typeFromText;
+        console.log(`[DOC] Detected document type from text: ${detectedType}`);
+      }
+    }
+
+    if (detectedType === 'unknown' && docTypeHint && docTypeHint !== 'unknown') {
+      detectedType = docTypeHint;
+      console.log(`[DOC] Detected document type from filename hint: ${detectedType}`);
     }
 
     if (detectedType === 'unknown') {

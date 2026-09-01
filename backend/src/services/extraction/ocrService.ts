@@ -137,6 +137,76 @@ async function runTesseract(imageBuffer: Buffer): Promise<{ text: string; confid
 }
 
 // ---------------------------------------------------------------------------
+// Image Preprocessing Pipeline (using node-canvas)
+// ---------------------------------------------------------------------------
+async function preprocessImageForOCR(imageBuffer: Buffer): Promise<Buffer | null> {
+  try {
+    const { createCanvas, loadImage } = await import('canvas');
+    const img = await loadImage(imageBuffer);
+
+    // 1. Target resolution: scale image to optimal text recognition DPI (~1800 - 2400px width)
+    let scale = 1.0;
+    if (img.width < 1000) {
+      scale = Math.min(3.0, 2000 / img.width);
+    } else if (img.width < 1600) {
+      scale = 1.5;
+    } else if (img.width > 3200) {
+      scale = 2400 / img.width;
+    }
+
+    const targetWidth = Math.max(200, Math.round(img.width * scale));
+    const targetHeight = Math.max(200, Math.round(img.height * scale));
+
+    const canvas = createCanvas(targetWidth, targetHeight);
+    const ctx = canvas.getContext('2d');
+
+    // High quality interpolation
+    ctx.imageSmoothingEnabled = true;
+    (ctx as any).imageSmoothingQuality = 'high';
+
+    // White background fill for transparent PNGs
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, targetWidth, targetHeight);
+
+    // Draw scaled image
+    ctx.drawImage(img, 0, 0, targetWidth, targetHeight);
+
+    // Pixel-level luminance & contrast stretching
+    const imgData = ctx.getImageData(0, 0, targetWidth, targetHeight);
+    const data = imgData.data;
+
+    let minLuma = 255;
+    let maxLuma = 0;
+
+    for (let i = 0; i < data.length; i += 4) {
+      const luma = Math.round(0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2]);
+      data[i] = luma;
+      data[i + 1] = luma;
+      data[i + 2] = luma;
+      if (luma < minLuma) minLuma = luma;
+      if (luma > maxLuma) maxLuma = luma;
+    }
+
+    // Auto-levels / contrast enhancement if dynamic range is compressed
+    const range = maxLuma - minLuma;
+    if (range > 20 && range < 220) {
+      for (let i = 0; i < data.length; i += 4) {
+        const stretched = Math.min(255, Math.max(0, Math.round(((data[i] - minLuma) / range) * 255)));
+        data[i] = stretched;
+        data[i + 1] = stretched;
+        data[i + 2] = stretched;
+      }
+    }
+
+    ctx.putImageData(imgData, 0, 0);
+    return canvas.toBuffer('image/png');
+  } catch (err: any) {
+    console.warn(`[OCRService] Image preprocessing fallback: ${err?.message}`);
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Scanned PDF → rasterize → Tesseract
 // ---------------------------------------------------------------------------
 async function ocrScannedPDF(fileBuffer: Buffer): Promise<{ text: string; isUsable: boolean; confidence: number }> {
@@ -177,7 +247,12 @@ async function ocrScannedPDF(fileBuffer: Buffer): Promise<{ text: string; isUsab
           const imgData: Uint8Array | undefined = page?.data;
           if (!imgData || imgData.length === 0) continue;
 
-          const imgBuffer = Buffer.from(imgData);
+          let imgBuffer: Buffer = Buffer.from(imgData);
+          const preprocessed = await preprocessImageForOCR(imgBuffer);
+          if (preprocessed) {
+            imgBuffer = Buffer.from(preprocessed);
+          }
+
           console.log(`[OCR] Tesseract recognizing page ${pageNum} (${imgBuffer.length} bytes)`);
           const { text } = await runTesseract(imgBuffer);
           if (text && text.trim().length > 10) {
@@ -224,19 +299,55 @@ class DefaultOCRService {
     const isImage = mimeType.startsWith('image/');
     const isPDF = mimeType === 'application/pdf';
 
-    // Path 1: Raster image
+    // Path 1: Raster image (PNG/JPEG/JPG)
     if (isImage) {
       console.log(`[OCR] Processing raster image (${mimeType}, ${fileBuffer.length} bytes)`);
       try {
-        const { text, confidence } = await runTesseract(fileBuffer);
-        const quality = evaluateOCRQuality(text);
-        console.log(`[OCR] Tesseract done: ${text.length} chars, score=${quality.score}, usable=${quality.isUsable}, signals=[${quality.signals.join(', ')}]`);
+        // Pass 1: Preprocessed image (upscaled + contrast normalized)
+        const preprocessed = await preprocessImageForOCR(fileBuffer);
+        const pass1Buffer: Buffer = preprocessed ? Buffer.from(preprocessed) : fileBuffer;
+
+        const res1 = await runTesseract(pass1Buffer);
+        const qual1 = evaluateOCRQuality(res1.text);
+
+        console.log(`[OCR] Pass 1 (preprocessed): ${res1.text.length} chars, score=${qual1.score}, usable=${qual1.isUsable}`);
+
+        if (qual1.isUsable && qual1.score >= 25) {
+          return {
+            text: res1.text,
+            method: 'ocr',
+            isUsable: true,
+            confidence: Math.min(0.95, Math.max(0.60, res1.confidence / 100)),
+            engine: 'tesseract_local',
+          };
+        }
+
+        // Pass 2: Raw original image fallback if Pass 1 wasn't usable
+        if (preprocessed && !qual1.isUsable) {
+          console.log(`[OCR] Running Pass 2 (raw original image fallback)...`);
+          const res2 = await runTesseract(fileBuffer);
+          const qual2 = evaluateOCRQuality(res2.text);
+
+          console.log(`[OCR] Pass 2 (raw): ${res2.text.length} chars, score=${qual2.score}, usable=${qual2.isUsable}`);
+
+          const bestText = qual2.score >= qual1.score ? res2.text : res1.text;
+          const bestScore = Math.max(qual1.score, qual2.score);
+          const isUsable = bestScore >= 25;
+
+          return {
+            text: bestText,
+            method: 'ocr',
+            isUsable,
+            confidence: isUsable ? 0.75 : 0,
+            engine: 'tesseract_local',
+          };
+        }
 
         return {
-          text,
+          text: res1.text,
           method: 'ocr',
-          isUsable: quality.isUsable,
-          confidence: quality.isUsable ? Math.min(0.95, Math.max(0.60, confidence / 100)) : 0,
+          isUsable: qual1.isUsable,
+          confidence: qual1.isUsable ? Math.min(0.95, Math.max(0.60, res1.confidence / 100)) : 0,
           engine: 'tesseract_local',
         };
       } catch (err: any) {

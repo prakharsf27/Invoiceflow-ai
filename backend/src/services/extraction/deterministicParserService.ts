@@ -304,11 +304,25 @@ export class DeterministicParserService {
       subtotal = NormalizationHelper.normalizeAmount(subtotalMatch[1]);
     }
 
-    // Check for combined tax or split CGST + SGST (ignoring percentage rate like "GST @ 18%: ₹14,400")
-    const taxMatch = text.match(/(?:grand\s*tax|total\s*tax|tax\s*amount|total\s*gst|\btax\b|\bgst\b|\bigst\b)(?:\s*[@(@]?\s*\d+(?:\.\d+)?\s*%\)?)?[\s:]*(?:[\r\n]+\s*)*(?:[^\d\r\n]*?)?([\d,]+(?:\.\d+)?)/i);
-    if (taxMatch) {
-      tax = NormalizationHelper.normalizeAmount(taxMatch[1]);
-    } else {
+    // Summary-anchored tax patterns (strictly excluding line-item "Tax Rate: 18%" or header "TAX INVOICE")
+    const summaryTaxPatterns = [
+      /(?:grand\s*tax|total\s*tax|tax\s*amount|total\s*gst|total\s*igst)[\s:]*(?:[^\d\r\n]*?)?([0-9,]+(?:\.[0-9]+)?)/i,
+      /(?:gst|igst|\btax\b)(?:\s*[@(@]?\s*[0-9]+(?:\.[0-9]+)?\s*%\)?)[\s:]*(?:[^\d\r\n]*?)?([0-9,]+(?:\.[0-9]+)?)/i,
+      /(?:^|\n)[^\S\r\n]*(?:gst|igst|\btax\b)(?!\s*(?:invoice|rate|id|number|no|code|amount|breakdown))[:\s]*([0-9,]+(?:\.[0-9]+)?)/i,
+    ];
+
+    for (const pat of summaryTaxPatterns) {
+      const match = text.match(pat);
+      if (match) {
+        const parsedCandidate = NormalizationHelper.normalizeAmount(match[1]);
+        if (parsedCandidate !== null) {
+          tax = parsedCandidate;
+          break;
+        }
+      }
+    }
+
+    if (tax === null) {
       // Check if CGST and SGST are on separate summary lines
       const cgstMatch = text.match(/\bcgst(?:\s*[@(@]?\s*\d+(?:\.\d+)?\s*%\)?)?[\s:]*(?:[\r\n]+\s*)*(?:[^\d\r\n]*?)?([\d,]+(?:\.\d+)?)/i);
       const sgstMatch = text.match(/\bsgst(?:\s*[@(@]?\s*\d+(?:\.\d+)?\s*%\)?)?[\s:]*(?:[\r\n]+\s*)*(?:[^\d\r\n]*?)?([\d,]+(?:\.\d+)?)/i);
@@ -394,17 +408,24 @@ export class DeterministicParserService {
     }
 
     // Math consistency resolution
+    if (subtotal && amount) {
+      const expectedTax = Math.round((amount - subtotal + discount) * 100) / 100;
+      // If tax was parsed as a rate (< 100) on a large subtotal, resolve to exact currency amount
+      if (tax !== null && tax < 100 && subtotal > 500 && Math.abs(expectedTax - tax) > 5) {
+        if (Math.abs(Math.round((subtotal * tax / 100) * 100) / 100 - expectedTax) < 5) {
+          tax = expectedTax;
+        }
+      }
+      if (tax === null && expectedTax >= 0 && expectedTax < amount) {
+        tax = expectedTax;
+      }
+    }
+
     if (subtotal && tax && !amount) {
       amount = Math.round((subtotal + tax - discount) * 100) / 100;
     }
     if (amount && tax && !subtotal) {
       subtotal = Math.round((amount - tax + discount) * 100) / 100;
-    }
-    if (subtotal && amount && tax === null) {
-      const calculatedTax = Math.round((amount - subtotal + discount) * 100) / 100;
-      if (calculatedTax >= 0 && calculatedTax < amount) {
-        tax = calculatedTax;
-      }
     }
 
     // 10. Bank Details (Strictly null if absent — never invent or use defaults)
@@ -839,6 +860,20 @@ export class DeterministicParserService {
         .replace(/\bRs\.?\s*/gi, '')
         .replace(/\s+/g, ' ')
         .trim();
+
+      // 1Z. Single-line key-value format (e.g. "1. Enterprise Cloud Server Qty: 10 Unit Price: 50,000.00 Tax Rate: 18% Tax Amount: 90,000.00 Total: 590,000.00")
+      const kvMatch = cleaned.match(/^(?:(\d+[.)]|[A-Za-z0-9\-_]{2,12})\s+)?(.+?)\s+Qty:\s*(\d+(?:\.\d+)?)\s+Unit\s*Price:\s*([\d,]+(?:\.\d+)?)\s*(?:Tax\s*Rate:\s*(\d+(?:\.\d+)?%?))?\s*(?:Tax\s*Amount:\s*([\d,]+(?:\.\d+)?))?\s*Total:\s*([\d,]+(?:\.\d+)?)$/i);
+      if (kvMatch) {
+        const { itemCode, description } = this.cleanCodeAndDesc(kvMatch[1], kvMatch[2]);
+        const qty = parseFloat(kvMatch[3]) || 1;
+        const unitPrice = NormalizationHelper.normalizeAmount(kvMatch[4]) || 0;
+        const taxRate = kvMatch[5] ? parseFloat(kvMatch[5].replace('%', '')) || 18 : 18;
+        const taxAmount = NormalizationHelper.normalizeAmount(kvMatch[6]) || 0;
+        const total = NormalizationHelper.normalizeAmount(kvMatch[7]) || (qty * unitPrice);
+
+        items.push({ itemCode, description, quantity: qty, unitPrice, taxRate, taxAmount, total });
+        continue;
+      }
 
       // 1A. Split CGST + SGST: [Code/Num] [Description] [Qty] [UnitPrice] [CGST%] [SGST%] [Total]
       let m = cleaned.match(/^(?:(\d+[.)]|[A-Za-z0-9\-_]{2,12})\s+)?(.+?)\s+(\d+(?:\.\d+)?)\s+([\d,]+(?:\.\d+)?)\s+(\d+(?:\.\d+)?%?)\s+(\d+(?:\.\d+)?%?)\s+([\d,]+(?:\.\d+)?)$/i);
