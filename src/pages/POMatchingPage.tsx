@@ -111,11 +111,12 @@ export const POMatchingPage: React.FC = () => {
 
             const variance = hasLinkedInvoice ? invAmount - poAmount : 0;
             const isAmountReconciled = hasLinkedInvoice && Math.abs(variance) <= 2.0;
-            const isVarianceAccepted = Boolean((po as any).varianceAccepted || po.matchStatus === 'matched' || po.status === 'matched');
-            const isClarificationRequested = Boolean((po as any).clarificationRequested || po.matchStatus === 'mismatch' || po.status === 'mismatch');
+            const isExplicitVarianceAccepted = Boolean((po as any).varianceAccepted);
+            const isClarificationRequested = Boolean((po as any).clarificationRequested);
 
-            const isMatched = isVarianceAccepted || (hasLinkedInvoice && isAmountReconciled && !isClarificationRequested);
-            const isMismatch = !isMatched && (isClarificationRequested || (hasLinkedInvoice && !isAmountReconciled));
+            const isMatched = isExplicitVarianceAccepted || (hasLinkedInvoice && isAmountReconciled && !isClarificationRequested) || po.matchStatus === 'matched' || po.status === 'matched';
+            const isVarianceAccepted = isExplicitVarianceAccepted || (isMatched && !isAmountReconciled);
+            const isMismatch = !isMatched && (isClarificationRequested || (hasLinkedInvoice && !isAmountReconciled) || po.matchStatus === 'mismatch' || po.status === 'mismatch');
 
             // Safe variance label calculation (Never produces NaN or Infinity)
             let varianceLabel = 'No Linked Invoice';
@@ -159,7 +160,9 @@ export const POMatchingPage: React.FC = () => {
                       <h2 className="text-base font-bold text-slate-900">
                         {po.supplierName || 'Vendor'} Reconciliation
                       </h2>
-                      {isMatched ? (
+                      {isVarianceAccepted ? (
+                        <Badge variant="success" size="sm" dot>VARIANCE ACCEPTED</Badge>
+                      ) : isMatched ? (
                         <Badge variant="success" size="sm" dot>100% PO MATCHED</Badge>
                       ) : isMismatch ? (
                         <Badge variant="danger" size="sm" dot>PO MISMATCH DETECTED</Badge>

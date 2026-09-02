@@ -152,21 +152,76 @@ export const acceptPOVariance = async (req: Request, res: Response): Promise<voi
     (po as any).varianceAccepted = true;
     (po as any).varianceAcceptedAt = new Date().toISOString();
     (po as any).varianceAcceptedBy = req.user?.userId || 'system';
+    (po as any).clarificationRequested = false;
+    (po as any).clarificationReason = undefined;
 
     // 2. Find and update associated Invoice in MongoDB
     const linkedInvoice = await findInvoiceForPO(companyId, po, invoiceId);
     let updatedInvoice: IInvoiceDocument | null = null;
 
     if (linkedInvoice) {
-      linkedInvoice.status = 'ready';
-      linkedInvoice.aiStatus = 'Variance Accepted';
-      linkedInvoice.paymentStatus = 'scheduled';
-      linkedInvoice.riskLevel = 'low';
-      linkedInvoice.aiChecks = (linkedInvoice.aiChecks || []).map((c) => ({
-        ...c,
-        passed: true,
-        type: 'success',
-      }));
+      // Only resolve the PO matching check in aiChecks; preserve math, tax, gstin, bank checks
+      const isPoCheck = (c: any) => {
+        const text = `${c.id || ''} ${c.title || ''} ${c.detail || ''}`.toLowerCase();
+        return text.includes('po') || text.includes('purchase order') || text.includes('3-way') || text.includes('variance');
+      };
+
+      let hadPoCheck = false;
+      const updatedAiChecks = (linkedInvoice.aiChecks || []).map((c) => {
+        if (isPoCheck(c)) {
+          hadPoCheck = true;
+          return {
+            ...c,
+            passed: true,
+            type: 'success' as const,
+            detail: `PO Variance accepted (${po.poNumber}): Reconciled with approved PO.`,
+          };
+        }
+        return c;
+      });
+
+      if (!hadPoCheck) {
+        updatedAiChecks.push({
+          id: `check-po-match-${Date.now()}`,
+          title: '3-Way PO Match',
+          passed: true,
+          type: 'success' as const,
+          detail: `PO Variance accepted (${po.poNumber}): Reconciled with approved PO.`,
+        });
+      }
+
+      linkedInvoice.aiChecks = updatedAiChecks;
+
+      // Evaluate remaining non-PO validation failures
+      const remainingCritical = (linkedInvoice.aiChecks || []).some(
+        (c) => !c.passed && c.type === 'critical'
+      );
+      const remainingWarning = (linkedInvoice.aiChecks || []).some(
+        (c) => !c.passed && c.type === 'warning'
+      );
+      const isBankChanged = Boolean(linkedInvoice.bankDetails?.isChangedFromPrevious);
+
+      if (isBankChanged || remainingCritical) {
+        // Critical issues remain (e.g. bank details changed, duplicate invoice) - keep blocked
+        linkedInvoice.status = 'critical';
+        linkedInvoice.aiStatus = isBankChanged
+          ? 'Bank Detail Change'
+          : 'Critical Review Required';
+        linkedInvoice.paymentStatus = 'on_hold';
+        linkedInvoice.riskLevel = 'critical';
+      } else if (remainingWarning) {
+        // Non-critical warnings remain (e.g. math discrepancy, minor extraction review)
+        linkedInvoice.status = 'review';
+        linkedInvoice.aiStatus = 'Needs Review';
+        linkedInvoice.paymentStatus = 'pending';
+        linkedInvoice.riskLevel = 'medium';
+      } else {
+        // Clean: PO variance was the only issue! Safe for scheduling
+        linkedInvoice.status = 'ready';
+        linkedInvoice.aiStatus = 'Variance Accepted';
+        linkedInvoice.paymentStatus = 'scheduled';
+        linkedInvoice.riskLevel = 'low';
+      }
 
       await linkedInvoice.save();
       updatedInvoice = linkedInvoice;
@@ -174,54 +229,129 @@ export const acceptPOVariance = async (req: Request, res: Response): Promise<voi
       // Ensure bidirectional linkage on PO
       po.invoiceId = linkedInvoice.id;
 
-      // Synchronize Payment record
-      try {
-        await PaymentModel.findOneAndUpdate(
-          {
-            companyId,
-            $or: [{ invoiceId: linkedInvoice.id }, { invoiceNumber: linkedInvoice.invoiceNumber }],
-          } as any,
-          {
-            $set: {
+      // Synchronize Payment record conditionally (only schedule if invoice is clean and ready)
+      if (linkedInvoice.paymentStatus === 'scheduled') {
+        try {
+          await PaymentModel.findOneAndUpdate(
+            {
               companyId,
-              invoiceId: linkedInvoice.id,
-              invoiceNumber: linkedInvoice.invoiceNumber,
-              supplierName: linkedInvoice.supplierName,
-              amount: linkedInvoice.amount,
-              dueDate: linkedInvoice.dueDate || linkedInvoice.invoiceDate || new Date().toISOString().split('T')[0],
-              status: 'scheduled',
-              poNumber: po.poNumber,
+              $or: [{ invoiceId: linkedInvoice.id }, { invoiceNumber: linkedInvoice.invoiceNumber }],
+            } as any,
+            {
+              $set: {
+                companyId,
+                invoiceId: linkedInvoice.id,
+                invoiceNumber: linkedInvoice.invoiceNumber,
+                supplierName: linkedInvoice.supplierName,
+                amount: linkedInvoice.amount,
+                dueDate: linkedInvoice.dueDate || linkedInvoice.invoiceDate || new Date().toISOString().split('T')[0],
+                status: 'scheduled',
+                poNumber: po.poNumber,
+              },
+              $setOnInsert: {
+                id: `pay-${linkedInvoice.id || Date.now()}`,
+              },
             },
-            $setOnInsert: {
-              id: `pay-${linkedInvoice.id || Date.now()}`,
-            },
-          },
-          { upsert: true, returnDocument: 'after' }
-        );
-      } catch (payErr) {
-        console.warn('Payment record sync warning:', payErr);
+            { upsert: true, returnDocument: 'after' }
+          );
+        } catch (payErr) {
+          console.warn('Payment record sync warning:', payErr);
+        }
+      } else {
+        try {
+          await PaymentModel.updateMany(
+            {
+              companyId,
+              $or: [{ invoiceId: linkedInvoice.id }, { invoiceNumber: linkedInvoice.invoiceNumber }],
+            } as any,
+            {
+              $set: {
+                status: linkedInvoice.paymentStatus === 'on_hold' ? 'on_hold' : 'pending',
+                poNumber: po.poNumber,
+              },
+            }
+          );
+        } catch (payErr) {
+          console.warn('Payment record update warning:', payErr);
+        }
       }
     }
 
     await po.save();
 
-    // 3. Update Document model matchResult if present
-    await DocumentModel.updateMany(
-      {
-        companyId,
-        $or: [
-          { 'extractedData.poNumber': new RegExp(`^${po.poNumber.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') },
-          { linkedRecordId: po.id },
-          ...(updatedInvoice ? [{ linkedRecordId: updatedInvoice.id }] : []),
-        ],
-      } as any,
-      {
-        $set: {
-          'matchResult.matchStatus': 'matched',
-          'matchResult.matchScore': 100,
-        },
+    // 3. Update Document model matchResult safely (handling null, undefined, and preserving existing objects)
+    const orConditions: any[] = [
+      { 'extractedData.poNumber': new RegExp(`^${po.poNumber.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') },
+      { linkedRecordId: po.id },
+    ];
+    if ((po as any)._id) {
+      orConditions.push({ linkedRecordId: String((po as any)._id) });
+    }
+    if (updatedInvoice) {
+      orConditions.push({ linkedRecordId: updatedInvoice.id });
+      if ((updatedInvoice as any)._id) {
+        orConditions.push({ linkedRecordId: String((updatedInvoice as any)._id) });
       }
-    );
+      if (updatedInvoice.invoiceNumber) {
+        orConditions.push({
+          'extractedData.invoiceNumber': new RegExp(`^${updatedInvoice.invoiceNumber.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i'),
+        });
+      }
+    }
+
+    const matchingDocs = await DocumentModel.find({
+      companyId,
+      $or: orConditions,
+    } as any);
+
+    for (const doc of matchingDocs) {
+      const existing = (doc.matchResult && typeof doc.matchResult === 'object') ? doc.matchResult : null;
+
+      let safeMatchedFields: string[] = [];
+      if (existing && Array.isArray(existing.matchedFields)) {
+        safeMatchedFields = [...existing.matchedFields];
+      } else if (existing && typeof existing.matchedFields === 'string') {
+        safeMatchedFields = [existing.matchedFields];
+      }
+      if (!safeMatchedFields.includes('PO Variance Accepted')) {
+        safeMatchedFields.push('PO Variance Accepted');
+      }
+
+      let safeDiscrepancies: string[] = [];
+      if (existing && Array.isArray(existing.discrepancies)) {
+        safeDiscrepancies = existing.discrepancies.filter(
+          (d: any) => typeof d === 'string' && !d.toLowerCase().includes('variance') && !d.toLowerCase().includes('mismatch')
+        );
+      }
+
+      const existingScore = (existing && typeof existing.matchScore === 'number' && !isNaN(existing.matchScore))
+        ? existing.matchScore
+        : null;
+
+      const safeMatchResult: any = {
+        ...(existing || {}),
+        invoiceId: updatedInvoice?.id || existing?.invoiceId,
+        purchaseOrderId: po.id || existing?.purchaseOrderId,
+        poNumber: po.poNumber || existing?.poNumber,
+        matchStatus: 'matched',
+        matchScore: 100,
+        originalMatchScore: existingScore ?? 100,
+        matchedFields: safeMatchedFields,
+        discrepancies: safeDiscrepancies,
+        varianceAccepted: true,
+        varianceAcceptedAt: new Date().toISOString(),
+        varianceAcceptedBy: req.user?.userId || 'system',
+        poDetails: existing?.poDetails || {
+          poNumber: po.poNumber,
+          totalAmount: po.totalAmount,
+          supplierName: po.supplierName,
+        },
+      };
+
+      doc.matchResult = safeMatchResult;
+      doc.markModified('matchResult');
+      await doc.save();
+    }
 
     console.log(`[PO-ACTION] ✅ Variance accepted for PO ${po.poNumber}. Linked invoice: ${updatedInvoice?.invoiceNumber || 'None'}`);
 
@@ -258,6 +388,8 @@ export const requestPOClarification = async (req: Request, res: Response): Promi
 
     po.matchStatus = 'mismatch';
     po.status = 'mismatch';
+    (po as any).varianceAccepted = false;
+    (po as any).varianceAcceptedAt = undefined;
     (po as any).clarificationRequested = true;
     (po as any).clarificationRequestedAt = new Date().toISOString();
     (po as any).clarificationReason = reason || 'Price/Quantity discrepancy clarification requested from vendor';

@@ -581,23 +581,61 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const acceptPOVariance = async (poNumberOrId: string, invoiceId?: string): Promise<void> => {
     try {
-      await poService.acceptVariance(poNumberOrId, invoiceId);
+      const res = await poService.acceptVariance(poNumberOrId, invoiceId);
+      if (res?.data?.purchaseOrder) {
+        setPoData((prev) =>
+          prev.map((p) =>
+            p.id === res.data.purchaseOrder.id || p.poNumber === res.data.purchaseOrder.poNumber
+              ? { ...p, ...res.data.purchaseOrder, matchStatus: 'matched', status: 'matched', varianceAccepted: true }
+              : p
+          )
+        );
+      }
+      if (res?.data?.invoice) {
+        setInvoices((prev) =>
+          prev.map((inv) =>
+            inv.id === res.data.invoice.id || inv.invoiceNumber === res.data.invoice.invoiceNumber
+              ? { ...inv, ...res.data.invoice }
+              : inv
+          )
+        );
+      }
       await fetchAllBackendData();
       showToast(`Variance accepted for PO ${poNumberOrId}! Reconciled & queued for payment.`, 'success');
     } catch (err: any) {
       console.error(`Failed to accept variance for PO ${poNumberOrId}:`, err);
       showToast(err?.message || 'Failed to persist variance acceptance to backend.', 'error');
+      throw err;
     }
   };
 
   const requestPOClarification = async (poNumberOrId: string, invoiceId?: string, reason?: string): Promise<void> => {
     try {
-      await poService.requestClarification(poNumberOrId, invoiceId, reason);
+      const res = await poService.requestClarification(poNumberOrId, invoiceId, reason);
+      if (res?.data?.purchaseOrder) {
+        setPoData((prev) =>
+          prev.map((p) =>
+            p.id === res.data.purchaseOrder.id || p.poNumber === res.data.purchaseOrder.poNumber
+              ? { ...p, ...res.data.purchaseOrder, matchStatus: 'mismatch', status: 'mismatch', clarificationRequested: true }
+              : p
+          )
+        );
+      }
+      if (res?.data?.invoice) {
+        setInvoices((prev) =>
+          prev.map((inv) =>
+            inv.id === res.data.invoice.id || inv.invoiceNumber === res.data.invoice.invoiceNumber
+              ? { ...inv, ...res.data.invoice }
+              : inv
+          )
+        );
+      }
       await fetchAllBackendData();
       showToast(`Clarification requested for PO ${poNumberOrId}!`, 'warning');
     } catch (err: any) {
       console.error(`Failed to request clarification for PO ${poNumberOrId}:`, err);
       showToast(err?.message || 'Failed to persist clarification request to backend.', 'error');
+      throw err;
     }
   };
 

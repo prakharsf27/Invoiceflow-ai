@@ -510,10 +510,14 @@ Mismatch reasons: ${discrepancies.length > 0 ? discrepancies.join(' | ') : 'None
               { returnDocument: 'after' }
             );
 
-            // Synchronize PurchaseOrderModel matchStatus & invoiceId
+            // Synchronize PurchaseOrderModel matchStatus & invoiceId (do not revert if variance was explicitly accepted)
             if (newMatchResult.poNumber) {
               await PurchaseOrderModel.updateOne(
-                { companyId, poNumber: new RegExp(`^${newMatchResult.poNumber.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') },
+                {
+                  companyId,
+                  poNumber: new RegExp(`^${newMatchResult.poNumber.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i'),
+                  varianceAccepted: { $ne: true },
+                },
                 {
                   $set: {
                     matchStatus: newMatchResult.matchStatus,

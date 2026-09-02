@@ -78,13 +78,15 @@ export const poService = {
     }
   },
   acceptVariance: async (id: string, invoiceId?: string): Promise<any> => {
-    return await fetchApi(`/purchase-orders/${id}/accept-variance`, {
+    const encodedId = encodeURIComponent(id.trim());
+    return await fetchApi(`/purchase-orders/${encodedId}/accept-variance`, {
       method: 'PATCH',
       body: JSON.stringify({ invoiceId }),
     });
   },
   requestClarification: async (id: string, invoiceId?: string, reason?: string): Promise<any> => {
-    return await fetchApi(`/purchase-orders/${id}/request-clarification`, {
+    const encodedId = encodeURIComponent(id.trim());
+    return await fetchApi(`/purchase-orders/${encodedId}/request-clarification`, {
       method: 'PATCH',
       body: JSON.stringify({ invoiceId, reason }),
     });
