@@ -35,7 +35,14 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [user, setUser] = useState<AuthUser | null>(null);
+  const [user, setUser] = useState<AuthUser | null>(() => {
+    try {
+      const savedUser = localStorage.getItem('invoiceflow_user');
+      return savedUser ? JSON.parse(savedUser) : null;
+    } catch {
+      return null;
+    }
+  });
   const [token, setToken] = useState<string | null>(() => {
     return localStorage.getItem('invoiceflow_token');
   });
@@ -51,17 +58,23 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           if (res && res.user) {
             setUser(res.user);
             setToken(storedToken);
+            localStorage.setItem('invoiceflow_user', JSON.stringify(res.user));
           } else {
             // Invalid token
             localStorage.removeItem('invoiceflow_token');
+            localStorage.removeItem('invoiceflow_user');
             setToken(null);
             setUser(null);
           }
         } catch {
           localStorage.removeItem('invoiceflow_token');
+          localStorage.removeItem('invoiceflow_user');
           setToken(null);
           setUser(null);
         }
+      } else {
+        localStorage.removeItem('invoiceflow_user');
+        setUser(null);
       }
       setIsLoading(false);
     };
@@ -73,6 +86,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   useEffect(() => {
     const handleUnauthorized = () => {
       localStorage.removeItem('invoiceflow_token');
+      localStorage.removeItem('invoiceflow_user');
       setToken(null);
       setUser(null);
     };
@@ -92,6 +106,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
 
     localStorage.setItem('invoiceflow_token', res.token);
+    localStorage.setItem('invoiceflow_user', JSON.stringify(res.user));
     setToken(res.token);
     setUser(res.user);
     return res.user;
@@ -115,6 +130,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
 
     localStorage.setItem('invoiceflow_token', res.token);
+    localStorage.setItem('invoiceflow_user', JSON.stringify(res.user));
     setToken(res.token);
     setUser(res.user);
     return res.user;
@@ -122,12 +138,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const updateUserCompany = (companyName: string) => {
     if (user) {
-      setUser({ ...user, companyName });
+      const updatedUser = { ...user, companyName };
+      setUser(updatedUser);
+      localStorage.setItem('invoiceflow_user', JSON.stringify(updatedUser));
     }
   };
 
   const loginWithToken = (newToken: string, newUser: AuthUser) => {
     localStorage.setItem('invoiceflow_token', newToken);
+    localStorage.setItem('invoiceflow_user', JSON.stringify(newUser));
     setToken(newToken);
     setUser(newUser);
   };
@@ -137,6 +156,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       await fetchApi('/auth/logout', { method: 'POST' }).catch(() => {});
     } finally {
       localStorage.removeItem('invoiceflow_token');
+      localStorage.removeItem('invoiceflow_user');
       setToken(null);
       setUser(null);
     }

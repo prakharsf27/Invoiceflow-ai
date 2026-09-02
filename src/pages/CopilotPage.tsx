@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Sparkles, Send, Bot, ArrowRight, AlertTriangle, MessageSquare, HelpCircle } from 'lucide-react';
 import { Card } from '../components/ui/Card';
@@ -11,24 +11,40 @@ import type { CopilotMessage } from '../types';
 
 export const CopilotPage: React.FC = () => {
   const navigate = useNavigate();
-  const { invoices, suppliers, showToast, refreshData } = useApp();
+  const {
+    invoices,
+    suppliers,
+    showToast,
+    refreshData,
+    copilotMessages: messages,
+    setCopilotMessages: setMessages,
+    clearCopilotHistory,
+  } = useApp();
   const { user } = useAuth();
+  const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  React.useEffect(() => {
+  useEffect(() => {
     refreshData();
   }, [refreshData]);
 
-  const [messages, setMessages] = useState<CopilotMessage[]>([
-    {
-      id: 'init-1',
-      role: 'assistant',
-      content: `Hello ${user?.name || 'there'}! I am your AI Finance Copilot. I analyze ${user?.companyName || 'your company'}'s live invoices, PO matches, bank detail changes, and upcoming payables. What would you like to investigate today?`,
-      timestamp: '10:00 AM',
-    },
-  ]);
   const [input, setInput] = useState('');
   const [isTyping, setIsTyping] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  // Scroll to bottom on mount and when messages change
+  const scrollToBottom = (behavior: ScrollBehavior = 'smooth') => {
+    messagesEndRef.current?.scrollIntoView({ behavior });
+  };
+
+  useEffect(() => {
+    scrollToBottom('auto');
+  }, []);
+
+  useEffect(() => {
+    if (messages.length > 1) {
+      scrollToBottom('smooth');
+    }
+  }, [messages.length, isTyping]);
 
   const suggestedQuestions = [
     'What needs my attention today?',
@@ -106,7 +122,21 @@ export const CopilotPage: React.FC = () => {
               </p>
             </div>
           </div>
-          <Badge variant="purple" size="sm">InvoiceFlow AI</Badge>
+          <div className="flex items-center gap-2">
+            {messages.length > 1 && (
+              <button
+                onClick={() => {
+                  clearCopilotHistory();
+                  showToast('Copilot conversation cleared', 'info');
+                }}
+                className="text-[11px] font-medium text-slate-400 hover:text-rose-600 px-2 py-0.5 rounded transition-colors cursor-pointer"
+                title="Clear conversation history"
+              >
+                Clear History
+              </button>
+            )}
+            <Badge variant="purple" size="sm">InvoiceFlow AI</Badge>
+          </div>
         </div>
 
         {/* Message Stream */}
@@ -205,6 +235,8 @@ export const CopilotPage: React.FC = () => {
               <span>Analyzing organization dataset...</span>
             </div>
           )}
+
+          <div ref={messagesEndRef} />
         </div>
 
         {/* Input Bar */}

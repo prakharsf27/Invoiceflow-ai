@@ -1,8 +1,9 @@
-import React, { createContext, useContext, useState, useEffect, useMemo, useCallback } from 'react';
-import type { Invoice, Supplier, PurchaseOrder, PaymentRecord, InvoiceStatus } from '../types';
+import React, { createContext, useContext, useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import type { Invoice, Supplier, PurchaseOrder, PaymentRecord, InvoiceStatus, CopilotMessage } from '../types';
 import { invoiceService } from '../services/invoiceService';
 import { supplierService, poService, paymentService, exceptionService } from '../services/dataServices';
 import { copilotService } from '../services/copilotService';
+import { useAuth } from './AuthContext';
 
 export interface AppNotification {
   id: string;
@@ -62,13 +63,54 @@ interface AppContextType {
     relatedInvoices?: Invoice[];
     structuredData?: any;
   }>;
+
+  // Copilot conversation history
+  copilotMessages: CopilotMessage[];
+  setCopilotMessages: React.Dispatch<React.SetStateAction<CopilotMessage[]>>;
+  clearCopilotHistory: () => void;
 }
 
 const NOTIF_STORAGE_KEY = 'invoiceflow_app_notifications_v1';
+const COPILOT_STORAGE_PREFIX = 'invoiceflow_copilot_history_';
+
+export const getInitialCopilotGreeting = (
+  user?: { name?: string; companyName?: string } | null
+): CopilotMessage => ({
+  id: 'init-1',
+  role: 'assistant',
+  content: `Hello ${user?.name || 'there'}! I am your AI Finance Copilot. I analyze ${
+    user?.companyName || 'your company'
+  }'s live invoices, PO matches, bank detail changes, and upcoming payables. What would you like to investigate today?`,
+  timestamp: '10:00 AM',
+});
+
+export const loadCopilotHistoryFromStorage = (
+  companyId?: string | null,
+  user?: { name?: string; companyName?: string } | null
+): CopilotMessage[] => {
+  if (!companyId) {
+    return [getInitialCopilotGreeting(user)];
+  }
+  try {
+    const raw = localStorage.getItem(`${COPILOT_STORAGE_PREFIX}${companyId}`);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        return parsed;
+      }
+    }
+  } catch (err) {
+    console.error('Failed to load copilot history from localStorage:', err);
+  }
+  return [getInitialCopilotGreeting(user)];
+};
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const { user } = useAuth();
+  const activeCompanyId = user?.companyId || null;
+
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [suppliersData, setSuppliersData] = useState<Supplier[]>([]);
   const [poData, setPoData] = useState<PurchaseOrder[]>([]);
@@ -90,6 +132,64 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   });
 
   const [toast, setToast] = useState<ToastMessage | null>(null);
+
+  // Copilot conversation history state - isolated by workspace/companyId
+  const [copilotMessages, setCopilotMessagesState] = useState<CopilotMessage[]>(() => {
+    return loadCopilotHistoryFromStorage(activeCompanyId, user);
+  });
+
+  const lastActiveCompanyIdRef = useRef<string | null>(activeCompanyId);
+
+  // Synchronize when active company/workspace changes (e.g. login, logout, switch workspace)
+  useEffect(() => {
+    if (activeCompanyId !== lastActiveCompanyIdRef.current) {
+      lastActiveCompanyIdRef.current = activeCompanyId;
+      const history = loadCopilotHistoryFromStorage(activeCompanyId, user);
+      setCopilotMessagesState(history);
+    } else if (
+      activeCompanyId &&
+      copilotMessages.length === 1 &&
+      copilotMessages[0].id === 'init-1' &&
+      user?.name &&
+      copilotMessages[0].content.includes('there')
+    ) {
+      // If initialized before user profile loaded, personalize the initial greeting
+      setCopilotMessagesState([getInitialCopilotGreeting(user)]);
+    }
+  }, [activeCompanyId, user]);
+
+  // Set and persist Copilot messages
+  const setCopilotMessages: React.Dispatch<React.SetStateAction<CopilotMessage[]>> = useCallback(
+    (action) => {
+      setCopilotMessagesState((prev) => {
+        const next = typeof action === 'function' ? action(prev) : action;
+        if (activeCompanyId) {
+          try {
+            localStorage.setItem(
+              `${COPILOT_STORAGE_PREFIX}${activeCompanyId}`,
+              JSON.stringify(next)
+            );
+          } catch (err) {
+            console.error('Failed to persist copilot messages to localStorage:', err);
+          }
+        }
+        return next;
+      });
+    },
+    [activeCompanyId]
+  );
+
+  // Reset/clear Copilot conversation history for current company
+  const clearCopilotHistory = useCallback(() => {
+    if (activeCompanyId) {
+      try {
+        localStorage.removeItem(`${COPILOT_STORAGE_PREFIX}${activeCompanyId}`);
+      } catch (err) {
+        console.error('Failed to clear copilot history from localStorage:', err);
+      }
+    }
+    setCopilotMessagesState([getInitialCopilotGreeting(user)]);
+  }, [activeCompanyId, user]);
 
   // Initial Data Fetching from REST APIs (parallelized, non-blocking, error-resilient)
   const fetchAllBackendData = useCallback(async () => {
@@ -563,6 +663,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     fetchAllBackendData();
     localStorage.removeItem(NOTIF_STORAGE_KEY);
     setNotifications([]);
+    clearCopilotHistory();
     showToast('Data refreshed from live backend API', 'info');
   };
 
@@ -616,6 +717,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         resetToDefault,
         showToast,
         askCopilot,
+        copilotMessages,
+        setCopilotMessages,
+        clearCopilotHistory,
       }}
     >
       {children}
