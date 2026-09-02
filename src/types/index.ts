@@ -147,13 +147,13 @@ export interface Invoice {
   paymentStatus: PaymentStatus;
   riskLevel: RiskLevel | 'critical';
   paymentTerms: string;
-  bankDetails: {
-    accountNumber: string;
-    ifsc: string;
-    bankName: string;
+  bankDetails?: {
+    accountNumber?: string | null;
+    ifsc?: string | null;
+    bankName?: string | null;
     isChangedFromPrevious?: boolean;
     previousAccountNumber?: string;
-  };
+  } | null;
   items: InvoiceItem[];
   aiChecks: AICheck[];
   aiRecommendation: string;

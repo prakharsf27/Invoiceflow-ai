@@ -28,6 +28,7 @@ interface AppContextType {
   notifications: AppNotification[];
   toast: ToastMessage | null;
   isLoading: boolean;
+  apiError: string | null;
   
   // Dashboard Metrics
   totalPayables: number;
@@ -73,6 +74,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [poData, setPoData] = useState<PurchaseOrder[]>([]);
   const [paymentRecords, setPaymentRecords] = useState<PaymentRecord[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [apiError, setApiError] = useState<string | null>(null);
 
   const [notifications, setNotifications] = useState<AppNotification[]>(() => {
     try {
@@ -89,7 +91,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const [toast, setToast] = useState<ToastMessage | null>(null);
 
-  // Initial Data Fetching from REST APIs (parallelized and non-blocking)
+  // Initial Data Fetching from REST APIs (parallelized, non-blocking, error-resilient)
   const fetchAllBackendData = useCallback(async () => {
     const token = localStorage.getItem('invoiceflow_token');
     if (!token) {
@@ -98,20 +100,44 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
 
     setIsLoading(true);
+    let errorCount = 0;
     try {
       const [fetchedInvoices, fetchedSuppliers, fetchedPOs, fetchedPayments] = await Promise.all([
-        invoiceService.getInvoices().catch(() => []),
-        supplierService.getSuppliers().catch(() => []),
-        poService.getPurchaseOrders().catch(() => []),
-        paymentService.getPayments().catch(() => []),
+        invoiceService.getInvoices().catch((err) => {
+          errorCount++;
+          console.warn('Backend invoices API unavailable:', err);
+          return null;
+        }),
+        supplierService.getSuppliers().catch((err) => {
+          errorCount++;
+          console.warn('Backend suppliers API unavailable:', err);
+          return null;
+        }),
+        poService.getPurchaseOrders().catch((err) => {
+          errorCount++;
+          console.warn('Backend purchase-orders API unavailable:', err);
+          return null;
+        }),
+        paymentService.getPayments().catch((err) => {
+          errorCount++;
+          console.warn('Backend payments API unavailable:', err);
+          return null;
+        }),
       ]);
 
-      setInvoices(fetchedInvoices || []);
-      setSuppliersData(fetchedSuppliers || []);
-      setPoData(fetchedPOs || []);
-      setPaymentRecords(fetchedPayments || []);
-    } catch (err) {
+      if (fetchedInvoices !== null) setInvoices(fetchedInvoices);
+      if (fetchedSuppliers !== null) setSuppliersData(fetchedSuppliers);
+      if (fetchedPOs !== null) setPoData(fetchedPOs);
+      if (fetchedPayments !== null) setPaymentRecords(fetchedPayments);
+
+      if (errorCount > 0) {
+        setApiError('Unable to connect to one or more backend services. Some live records may be temporarily unavailable.');
+      } else {
+        setApiError(null);
+      }
+    } catch (err: any) {
       console.error('Failed to load data from backend server:', err);
+      setApiError(err?.message || 'Network connection to backend server failed.');
     } finally {
       setIsLoading(false);
     }
@@ -528,10 +554,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     showToast('All notifications marked as read', 'info');
   };
 
-  const refreshData = async () => {
+  const refreshData = useCallback(async () => {
     await fetchAllBackendData();
     showToast('Data refreshed & synced with backend', 'info');
-  };
+  }, [fetchAllBackendData]);
 
   const resetToDefault = () => {
     fetchAllBackendData();
@@ -567,6 +593,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         notifications,
         toast,
         isLoading,
+        apiError,
         totalPayables,
         invoicesReceived,
         needAttentionCount,
