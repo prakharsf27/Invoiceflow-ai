@@ -170,7 +170,7 @@ async function runAcceptVarianceTestSuite() {
     throw new Error(`FAILED Test 2: ${res2.body?.message}`);
   }
 
-  const updatedDoc2 = await DocumentModel.findOne({ id: doc2.id });
+  const updatedDoc2: any = await DocumentModel.findOne({ id: doc2.id });
   if (updatedDoc2?.matchResult?.matchStatus !== 'matched' || updatedDoc2?.matchResult?.originalMatchScore !== 70) {
     throw new Error('FAILED Test 2: Reconciliation info or original score was not preserved');
   }
@@ -216,7 +216,7 @@ async function runAcceptVarianceTestSuite() {
   });
 
   // Specifically create a PO document AND Invoice document with matchResult: null
-  const poDoc3 = await DocumentModel.create({
+  const poDoc3: any = await DocumentModel.create({
     id: `doc-po3-${Date.now()}`,
     companyId: testCompanyId,
     uploadedBy: 'test-user',
@@ -230,10 +230,10 @@ async function runAcceptVarianceTestSuite() {
     processingStatus: 'processed',
     extractionStatus: 'extracted',
     linkedRecordId: po3.id,
-    matchResult: null, // <--- THIS USED TO CRASH WITH: Cannot create field 'matchScore' in element {matchResult: null}
+    matchResult: null as any, // <--- THIS USED TO CRASH WITH: Cannot create field 'matchScore' in element {matchResult: null}
   });
 
-  const invDoc3 = await DocumentModel.create({
+  const invDoc3: any = await DocumentModel.create({
     id: `doc-inv3-${Date.now()}`,
     companyId: testCompanyId,
     uploadedBy: 'test-user',
@@ -247,7 +247,7 @@ async function runAcceptVarianceTestSuite() {
     processingStatus: 'processed',
     extractionStatus: 'extracted',
     linkedRecordId: inv3.id,
-    matchResult: null, // <--- ALSO NULL
+    matchResult: null as any, // <--- ALSO NULL
   });
 
   const res3 = mockRes();
@@ -257,8 +257,8 @@ async function runAcceptVarianceTestSuite() {
   }
 
   // Verify that matchResult is no longer null and has a valid shape
-  const updatedPoDoc3 = await DocumentModel.findOne({ id: poDoc3.id });
-  const updatedInvDoc3 = await DocumentModel.findOne({ id: invDoc3.id });
+  const updatedPoDoc3: any = await DocumentModel.findOne({ id: poDoc3.id });
+  const updatedInvDoc3: any = await DocumentModel.findOne({ id: invDoc3.id });
   if (!updatedPoDoc3?.matchResult || updatedPoDoc3.matchResult.matchStatus !== 'matched') {
     throw new Error('FAILED Test 3: PO Document matchResult was not safely converted from null to matched object');
   }
